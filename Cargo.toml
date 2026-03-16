@@ -1,0 +1,12 @@
+[package]
+name = "bevy_rblx"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = "0.18.1"
+inventory = "0.3.22"
+mlua = { version = "0.11.6", features = ["async", "luau", "luau-jit", "mlua_derive", "vendored"] }
+
+[workspace]
+members = ["crates/bevy_rblx_derive"]
