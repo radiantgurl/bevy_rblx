@@ -2,15 +2,15 @@
 
 use convert_case::Casing;
 use parse::{
-    parse_lua_fn_attr, AttrArguments, Instance, InstanceConfig, InstanceConfigAttr,
-    LuaFunctionData, LuaPropertyData,
+    AttrArguments, Instance, InstanceConfig, InstanceConfigAttr, LuaFunctionData, LuaPropertyData,
+    parse_lua_fn_attr,
 };
-use proc_macro2::Span;
-use quote::{quote, ToTokens};
+use proc_macro2::{Span, TokenStream};
+use quote::{ToTokens, quote};
 use syn::{
-    parse::Parser, parse_macro_input, punctuated::Punctuated, spanned::Spanned, Error, ExprArray,
-    Field, Ident, ItemEnum, ItemImpl, LitStr, Path, PathSegment, Token, TraitBound, TypeParamBound,
-    TypeTraitObject,
+    Error, ExprArray, Field, Ident, ItemEnum, ItemImpl, LitStr, Path, PathSegment, Token,
+    TraitBound, TypeParamBound, TypeTraitObject, parse::Parser, parse_macro_input,
+    punctuated::Punctuated, spanned::Spanned,
 };
 use utils::camel_case_to_snake_case;
 
@@ -259,7 +259,7 @@ pub fn instance(
             if f.readonly {
                 let name = LitStr::new(&f.name, Span::call_site());
                 quotes.push(quote! {
-                    #name => Some(Err(r2g_mlua::prelude::LuaError::RuntimeError("Cannot set read only property.".into())))
+                    #name => Some(Err(mlua::prelude::LuaError::RuntimeError("Cannot set read only property.".into())))
                 });
             }
         }
@@ -281,23 +281,23 @@ pub fn instance(
                 todo!("implement `new` *cleanly*. somehow. who knows how. cuz rust fields idk how to implement default/new for them here (lua fields are handled)")
             }
 
-            fn clone(self: &crate::core::RwLockReadGuard<'_, Self>, _: &r2g_mlua::Lua, _: &crate::instance::WeakManagedInstance) -> r2g_mlua::prelude::LuaResult<Self> {
-                Err(r2g_mlua::prelude::LuaError::RuntimeError("Cannot clone DataModelComponent".into()))
+            fn clone(self: &crate::core::RwLockReadGuard<'_, Self>, _: &mlua::Lua, _: &crate::instance::WeakManagedInstance) -> mlua::prelude::LuaResult<Self> {
+                Err(mlua::prelude::LuaError::RuntimeError("Cannot clone DataModelComponent".into()))
             }
 
-            fn lua_get(self: &mut crate::core::RwLockReadGuard<'_, Self>, ptr: &crate::instance::DynInstance, lua: &r2g_mlua::Lua, key: &String) -> Option<r2g_mlua::prelude::LuaResult<r2g_mlua::prelude::LuaValue>> {
+            fn lua_get(self: &mut crate::core::RwLockReadGuard<'_, Self>, ptr: &crate::instance::DynInstance, lua: &mlua::Lua, key: &String) -> Option<mlua::prelude::LuaResult<mlua::prelude::LuaValue>> {
                 use crate::core::lua_macros::lua_getter;
                 use crate::core::inheritance_cast_to;
                 use crate::core::lua_macros::lua_invalid_argument;
-                use r2g_mlua::prelude::IntoLua;
+                use mlua::prelude::IntoLua;
                 match key.as_str() {
                     #(#iinstance_lua_get),*,
                     _ => None
                 }
             }
 
-            fn lua_set(self: &mut crate::core::RwLockWriteGuard<'_, Self>, _ptr: &crate::instance::DynInstance, _lua: &r2g_mlua::Lua, key: &String, _value: &r2g_mlua::prelude::LuaValue) -> Option<r2g_mlua::prelude::LuaResult<()>> {
-                use r2g_mlua::prelude::IntoLua;
+            fn lua_set(self: &mut crate::core::RwLockWriteGuard<'_, Self>, _ptr: &crate::instance::DynInstance, _lua: &mlua::Lua, key: &String, _value: &mlua::prelude::LuaValue) -> Option<mlua::prelude::LuaResult<()>> {
+                use mlua::prelude::IntoLua;
                 match key.as_str() {
                     #(#iinstance_lua_set),*,
                     _ => None
@@ -342,7 +342,7 @@ pub fn instance(
                     _ => false
                 }
             }
-            fn lua_get(&self, lua: &r2g_mlua::Lua, name: String) -> r2g_mlua::prelude::LuaResult<r2g_mlua::prelude::LuaValue> {
+            fn lua_get(&self, lua: &mlua::Lua, name: String) -> mlua::prelude::LuaResult<mlua::prelude::LuaValue> {
                 use crate::instance::IInstanceComponent;
                 self.#snake_id.read().unwrap().lua_get(self, lua, &name)
                     .or_else(|| self.service_provider.read().unwrap().lua_get(self, lua, &name))
@@ -378,14 +378,14 @@ pub fn instance(
                 self.instance.write().unwrap()
             }
 
-            fn lua_set(&self, lua: &r2g_mlua::Lua, name: String, val: r2g_mlua::prelude::LuaValue) -> r2g_mlua::prelude::LuaResult<()> {
+            fn lua_set(&self, lua: &mlua::Lua, name: String, val: mlua::prelude::LuaValue) -> mlua::prelude::LuaResult<()> {
                 use crate::instance::IInstanceComponent;
                 self.#snake_id.write().unwrap().lua_set(self, lua, &name, &val)
                     .or_else(|| self.service_provider.write().unwrap().lua_set(self, lua, &name, &val))
                     .unwrap_or_else(|| self.instance.write().unwrap().lua_set(lua, &name, val))
             }
 
-            fn clone_instance(&self, _: &r2g_mlua::Lua) -> r2g_mlua::prelude::LuaResult<crate::instance::ManagedInstance> {
+            fn clone_instance(&self, _: &mlua::Lua) -> mlua::prelude::LuaResult<crate::instance::ManagedInstance> {
                 todo!("implement this cleanly too (same issue applies, but if no_clone this is optional)")
             }
         }
@@ -399,14 +399,14 @@ pub fn instance(
                 self.service_provider.write().unwrap()
             }
 
-            fn get_service(&self, service_name: String) -> r2g_mlua::prelude::LuaResult<crate::instance::ManagedInstance> {
+            fn get_service(&self, service_name: String) -> mlua::prelude::LuaResult<crate::instance::ManagedInstance> {
                 self.find_service(service_name)
                     .and_then(|x|
-                        x.ok_or_else(|| r2g_mlua::prelude::LuaError::RuntimeError("Service not found".into()))
+                        x.ok_or_else(|| mlua::prelude::LuaError::RuntimeError("Service not found".into()))
                     )
             }
 
-            fn find_service(&self, service_name: String) -> r2g_mlua::prelude::LuaResult<Option<crate::instance::ManagedInstance>> {
+            fn find_service(&self, service_name: String) -> mlua::prelude::LuaResult<Option<crate::instance::ManagedInstance>> {
                 crate::instance::DynInstance::find_first_child_of_class(self, service_name)
             }
         }
@@ -572,7 +572,7 @@ pub fn lua_enum(
     let enum_type_name = Ident::new(&format!("LuaEnum{}", name.to_string()), Span::call_site());
 
     quote! {
-        use r2g_mlua::prelude::*;
+        use mlua::prelude::*;
 
         #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
         #[repr(i16)]
@@ -721,7 +721,8 @@ pub fn create_enums(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
         .collect();
 
     quote! {
-        use r2g_mlua::prelude::*;
+        use mlua::prelude::*;
+        use bevy_rblx_derive::register;
 
         #(#modules)*
         #(#enum_use)*
@@ -764,14 +765,41 @@ pub fn create_enums(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 #(#enum_fields)*
             }
         }
-
-        impl crate::userdata::LuaSingleton for LuaEnums {
+        #[register]
+        impl bevy_rblx::core::LuaSingleton for LuaEnums {
             fn register_singleton(lua: &Lua) -> LuaResult<()> {
                 lua.globals().raw_set("Enums", LuaEnums)?;
                 Ok(())
             }
         }
 
+    }
+    .into()
+}
+
+#[proc_macro_attribute]
+pub fn register(
+    arguments: proc_macro::TokenStream,
+    ts: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
+    if !arguments.is_empty() {
+        let args_2: TokenStream = arguments.into();
+        return syn::Error::new(args_2.span(), "expected ]")
+            .into_compile_error()
+            .into();
+    }
+    let impl_block = parse_macro_input!(ts as ItemImpl);
+    let name = &impl_block.self_ty;
+    if impl_block.trait_.is_none() {
+        return Error::new_spanned(impl_block, "expected LuaSingleton impl block")
+            .into_compile_error()
+            .into();
+    }
+    quote! {
+        #impl_block
+        inventory::submit!(
+            bevy_rblx::core::singleton::SingletonRegisterFn(#name::register_singleton)
+        );
     }
     .into()
 }

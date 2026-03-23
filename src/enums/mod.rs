@@ -1,0 +1,32 @@
+use crate as bevy_rblx;
+use bevy_rblx::core::LuaSingleton;
+
+bevy_rblx_derive::create_enums!([
+    AnimatorRetargetingMode,
+    AvatarUnificationMode,
+    ClientAnimatorThrottlingMode,
+    Axis,
+    FluidForces,
+    IKControlConstraintSupport,
+    MeshPartHeadsAndAccessories,
+    MessageType,
+    ModelLevelOfDetail,
+    ModelStreamingBehavior,
+    ModelStreamingMode,
+    MoverConstraintRootBehaviorMode,
+    NormalId,
+    PathfindingUseImprovedSearch,
+    PhysicsSteppingMethod,
+    PlayerCharacterDestroyBehavior,
+    PrimalPhysicsSolver,
+    RejectCharacterDeletions,
+    RenderingCacheOptimizationMode,
+    ReplicateInstanceDestroySetting,
+    RollOutState,
+    RotationOrder,
+    RunContext,
+    SandboxedInstanceMode,
+    SignalBehavior,
+    StreamOutBehavior,
+    StreamingIntegrityMode
+]);

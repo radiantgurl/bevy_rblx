@@ -1,13 +1,12 @@
 use proc_macro2::Span;
 use quote::ToTokens;
 use syn::{
-    braced, bracketed,
+    Attribute, Error, Field, Generics, Ident, LitBool, LitStr, Path, Result, Signature, Token,
+    Visibility, WhereClause, braced, bracketed,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     spanned::Spanned,
     token::{self, Brace, Bracket, Comma, Eq, Semi, Struct},
-    Attribute, Error, Field, Generics, Ident, LitBool, LitStr, Path, Result, Signature, Token,
-    Visibility, WhereClause,
 };
 
 #[derive(Debug)]
@@ -127,7 +126,7 @@ pub fn parse_lua_fn_attr(attr: Attribute) -> Result<LuaFunctionData> {
                 return Err(Error::new(
                     attr.span(),
                     "`name` is required, but was not given",
-                ))
+                ));
             }
         },
         virt: virt.unwrap_or(false),
@@ -139,7 +138,7 @@ pub fn parse_lua_fn_attr(attr: Attribute) -> Result<LuaFunctionData> {
                 return Err(Error::new(
                     attr.span(),
                     "`func` is required, but was not given",
-                ))
+                ));
             }
         },
     })

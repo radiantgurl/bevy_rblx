@@ -5,8 +5,9 @@ edition = "2024"
 
 [dependencies]
 bevy = "0.18.1"
+bevy_rblx_derive = { version = "0.1.0", path = "crates/bevy_rblx_derive" }
 inventory = "0.3.22"
-mlua = { version = "0.11.6", features = ["async", "luau", "luau-jit", "mlua_derive", "vendored"] }
-
+lazy_static = "1.5.0"
+mlua = { version = "0.11.6", features = ["async", "luau", "luau-jit", "mlua_derive", "vendored", "send", "macros"] }
 [workspace]
 members = ["crates/bevy_rblx_derive"]

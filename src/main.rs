@@ -1,4 +1,5 @@
-pub mod coreș
+pub mod core;
+pub mod enums;
 pub mod instance;
 pub mod userdata;
 
