@@ -81,15 +81,18 @@ lazy_static! {
     };
 }
 
+#[derive(Message, Clone, Copy)]
+pub struct NewInstanceEvent(pub Entity);
+
 impl InstanceConstructor {
-    pub fn new(
-        &self,
-        lua: &Lua,
-        entity: EntityCommands,
-        class_name: &str,
-    ) -> LuaResult<()> {
+    pub fn new(&self, lua: &Lua, mut entity: EntityCommands, class_name: &str) -> LuaResult<()> {
         if let Some(x) = self.all.get(class_name) {
-            x(lua, entity)
+            x(lua, entity.reborrow())?;
+            {
+                let e = entity.id();
+                entity.commands_mut().write_message(NewInstanceEvent(e));
+                Ok(())
+            }
         } else {
             Err(Error::runtime(format!(
                 "Cannot construct instance of type {class_name}"
@@ -99,11 +102,16 @@ impl InstanceConstructor {
     pub fn protected_new(
         &self,
         lua: &Lua,
-        entity: EntityCommands,
+        mut entity: EntityCommands,
         class_name: &str,
     ) -> LuaResult<()> {
         if let Some(x) = self.visible.get(class_name) {
-            x(lua, entity)
+            x(lua, entity.reborrow())?;
+            {
+                let e = entity.id();
+                entity.commands_mut().write_message(NewInstanceEvent(e));
+                Ok(())
+            }
         } else {
             Err(Error::runtime(format!(
                 "Cannot construct instance of type {class_name}"
@@ -111,3 +119,6 @@ impl InstanceConstructor {
         }
     }
 }
+
+#[derive(Clone, Copy, Component, Debug)]
+pub struct ActorProvenance(pub Entity);

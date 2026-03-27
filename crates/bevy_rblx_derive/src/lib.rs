@@ -704,7 +704,7 @@ pub fn create_enums(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 Ident::new(&format!("LuaEnum{}", x.to_string()), Span::call_site());
             quote! {
                 pub use #ident::#x;
-                pub use #ident::#enum_type_name;
+                use #ident::#enum_type_name;
             }
         })
         .collect();

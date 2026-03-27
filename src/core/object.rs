@@ -1,7 +1,11 @@
-use bevy::prelude::*;
+use bevy::{platform::collections::HashMap, prelude::*};
+use lazy_static::lazy_static;
 use mlua::prelude::*;
 
+use crate::core::RefCounted;
+
 #[derive(Component, Clone)]
+#[require(RefCounted)]
 pub struct ObjectHeader(pub &'static ObjectVTable);
 
 impl std::fmt::Debug for ObjectHeader {
@@ -30,3 +34,11 @@ pub struct ObjectVTable {
 }
 
 inventory::collect!(ObjectVTable);
+
+lazy_static! {
+    pub static ref OBJECT_VTABLES: HashMap<&'static str, &'static ObjectVTable> =
+        inventory::iter::<ObjectVTable>
+            .into_iter()
+            .map(|x| (x.class_name, x))
+            .collect();
+}
