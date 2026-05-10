@@ -1,467 +1,18 @@
 #![feature(if_let_guard)]
 
-use convert_case::Casing;
-use parse::{
-    AttrArguments, Instance, InstanceConfig, InstanceConfigAttr, LuaFunctionData, LuaPropertyData,
-    parse_lua_fn_attr,
-};
+use parse::AttrArguments;
 use proc_macro2::{Span, TokenStream};
-use quote::{ToTokens, quote};
+use quote::{quote, quote_spanned};
 use syn::{
-    Error, ExprArray, Field, Ident, ItemEnum, ItemImpl, LitStr, Path, PathSegment, Token,
-    TraitBound, TypeParamBound, TypeTraitObject, parse::Parser, parse_macro_input,
-    punctuated::Punctuated, spanned::Spanned,
+    Error, Expr, ExprArray, Ident, ItemEnum, ItemImpl, Token, Type, parse::Parse,
+    parse_macro_input, spanned::Spanned,
 };
 use utils::camel_case_to_snake_case;
 
+use crate::{parse::ClassArgs, utils::snake_case_to_camel_case};
+
 mod parse;
 mod utils;
-
-macro_rules! error_cattr {
-    ($span:expr, $err:literal) => {
-        syn::Error::new($span, $err).into_compile_error()
-    };
-}
-
-#[proc_macro_attribute]
-pub fn instance(
-    item: proc_macro::TokenStream,
-    ts: proc_macro::TokenStream,
-) -> proc_macro::TokenStream {
-    let item: Punctuated<InstanceConfigAttr, Token![,]> =
-        match Punctuated::parse_terminated.parse(item) {
-            Ok(s) => s,
-            Err(e) => return e.into_compile_error().into(),
-        };
-
-    // convert punct to conf
-    let mut no_clone = None;
-    let mut parent_locked = None;
-    let mut hierarchy: Option<Vec<syn::Path>> = None;
-    let mut custom_new = None;
-    let mut requires_init = None;
-
-    for ca in item {
-        match ca {
-            InstanceConfigAttr::NoClone(b, _, span) => {
-                if no_clone.is_none() {
-                    no_clone = Some(b)
-                } else {
-                    return error_cattr!(span, "`no_clone` specified twice").into();
-                }
-            }
-            InstanceConfigAttr::ParentLocked(b, _eq, span) => {
-                if parent_locked.is_none() {
-                    parent_locked = Some(b)
-                } else {
-                    return error_cattr!(span, "`parent_locked` specified twice").into();
-                }
-            }
-            InstanceConfigAttr::Hierarchy(_eq, _bracket, punctuated, span) => {
-                if hierarchy.is_none() {
-                    hierarchy = Some(punctuated.into_iter().collect())
-                } else {
-                    return error_cattr!(span, "`hierarchy` specified twice").into();
-                }
-            }
-            InstanceConfigAttr::CustomNew(b, _eq, span) => {
-                if custom_new.is_none() {
-                    custom_new = Some(b)
-                } else {
-                    return error_cattr!(span, "`custom_new` specified twice").into();
-                }
-            }
-            InstanceConfigAttr::RequiresInit(b, _eq, span) => {
-                if requires_init.is_none() {
-                    requires_init = Some(b)
-                } else {
-                    return error_cattr!(span, "`requires_init` specified twice").into();
-                }
-            }
-        }
-    }
-
-    let ic = InstanceConfig {
-        no_clone: no_clone.unwrap_or(false),
-        parent_locked: parent_locked.unwrap_or(false),
-        hierarchy: hierarchy.unwrap_or(vec![]),
-        custom_new: custom_new.unwrap_or(false),
-        requires_init: requires_init.unwrap_or(false),
-    };
-    let ts1 = ts.clone(); // temporary
-    let mut inst: Instance = parse_macro_input!(ts1);
-
-    let mut lua_fns: Vec<LuaFunctionData> = vec![];
-    let mut taken = vec![];
-    let mut i = 0;
-    while i < inst.attrs.len() {
-        if inst.attrs[i].path().is_ident("method") {
-            taken.push(inst.attrs.swap_remove(i)); // Swap and remove the matching item
-        } else {
-            i += 1; // Only increment if no removal
-        }
-    }
-
-    for attr in taken {
-        lua_fns.push(match parse_lua_fn_attr(attr) {
-            Ok(s) => s,
-            Err(e) => return e.into_compile_error().into(),
-        });
-    }
-
-    let mut rust_fields: Vec<Field> = vec![];
-    let mut lua_fields: Vec<LuaPropertyData> = vec![];
-
-    for i in inst.contents.named {
-        match i {
-            parse::InstanceContent::RustField { rust_field } => rust_fields.push(rust_field),
-            parse::InstanceContent::LuaField {
-                lua_field,
-                rust_field,
-            } => {
-                if !lua_field.transparent {
-                    rust_fields.push(rust_field);
-                }
-                lua_fields.push(lua_field);
-            }
-        }
-    }
-
-    let (attr, vis, struct_token, gens, ident) = (
-        inst.attrs,
-        inst.vis,
-        inst.struct_token,
-        inst.generics,
-        inst.ident,
-    );
-
-    let component_name = Ident::new(&(ident.to_string() + "Component"), ident.span());
-    let trait_name = Ident::new(&("I".to_owned() + &ident.to_string()), ident.span());
-
-    let snake = ident.to_string().to_case(convert_case::Case::Snake);
-    let snake_id = Ident::new(&snake, ident.span());
-    let mut component_get_name = String::from("get_");
-    component_get_name.push_str(&snake);
-    component_get_name.push_str("_component");
-
-    let mut component_get_mut_name = String::from("get_");
-    component_get_mut_name.push_str(&snake);
-    component_get_mut_name.push_str("_component_mut");
-
-    let (cgn, cgmn) = (
-        Ident::new(&component_get_name, ident.span()),
-        Ident::new(&component_get_mut_name, ident.span()),
-    );
-
-    let inherited_names: Vec<LitStr> = ic
-        .hierarchy
-        .iter()
-        .map(|i| LitStr::new(&i.segments.last().unwrap().ident.to_string(), i.span()))
-        .collect();
-
-    let inherited: Vec<syn::Path> = ic
-        .hierarchy
-        .into_iter()
-        .into_iter()
-        .map(|i| syn::Path {
-            leading_colon: i.leading_colon,
-            segments: {
-                let mut punct: Punctuated<PathSegment, Token![::]> = Punctuated::new();
-
-                let len = i.segments.len();
-
-                for (i, mut element) in i.segments.into_iter().enumerate() {
-                    if i < len - 1 {
-                        punct.push(element);
-                    } else {
-                        element.ident = Ident::new(
-                            &("I".to_owned() + &element.ident.to_string()),
-                            element.ident.span(),
-                        );
-                        punct.push(element);
-                    }
-                }
-
-                punct
-            },
-        })
-        .collect();
-
-    let s = LitStr::new(&ident.to_string(), ident.span());
-
-    let iinstance_lua_get = {
-        // todo: add more features (e.g. security enforcement)
-        let mut quotes: Vec<proc_macro2::TokenStream> = vec![];
-        for f in &lua_fields {
-            if f.transparent {
-                if let Some(get) = &f.get {
-                    let name = LitStr::new(&f.name, Span::call_site());
-                    quotes.push(quote! {
-                        #name => Some(lua_getter!(lua, #get(ptr, lua)))
-                    });
-                } else {
-                    return syn::Error::new(f.span, "has no getter despite being transparent")
-                        .into_compile_error()
-                        .into();
-                }
-            } else if let Some(get) = &f.get {
-                let name = LitStr::new(&f.name, Span::call_site());
-                quotes.push(quote! {
-                    #name => Some(lua_getter!(lua, #get(ptr, lua)))
-                });
-            } else {
-                let lua_name = LitStr::new(&f.name, Span::call_site());
-                let rust_name = &f.rust_name;
-
-                quotes.push(quote! {
-                    #lua_name => Some(lua_getter!(clone, lua, self.#rust_name))
-                });
-            }
-        }
-
-        quotes
-    };
-
-    let field_news = {
-        // todo: finish this
-        let mut quotes: Vec<proc_macro2::TokenStream> = vec![];
-
-        for f in &lua_fields {
-            if let Some(s) = &f.default {
-                let n = &f.rust_name;
-                if let Some(s) = s {
-                    quotes.push(quote! {
-                        #n: #s
-                    });
-                } else {
-                    quotes.push(quote! {
-                        #n: Default::default()
-                    });
-                }
-            } else {
-                return syn::Error::new(
-                    f.span,
-                    "default impl required for field (use Option if you don't have one)",
-                )
-                .into_compile_error()
-                .into();
-            }
-        }
-
-        quotes
-    };
-
-    let iinstance_lua_set = {
-        // todo: add more features (e.g. security enforcement)
-        let mut quotes: Vec<proc_macro2::TokenStream> = vec![];
-
-        for f in lua_fields {
-            if f.readonly {
-                let name = LitStr::new(&f.name, Span::call_site());
-                quotes.push(quote! {
-                    #name => Some(Err(mlua::prelude::LuaError::RuntimeError("Cannot set read only property.".into())))
-                });
-            }
-        }
-
-        quotes
-    };
-
-    quote! {
-        //static DEBUG: &str = #ls;
-        // static IC: &str = #moar;
-        // static RECEIVED_CODE: &str = #code;
-        // static FNS: &str = #lua_fns;
-        #(#attr)* #vis #struct_token #gens #component_name {
-            #(#rust_fields),*
-        }
-
-        impl crate::instance::IInstanceComponent for #component_name {
-            fn new(_ptr: crate::instance::WeakManagedInstance, _class_name: &'static str) -> Self {
-                todo!("implement `new` *cleanly*. somehow. who knows how. cuz rust fields idk how to implement default/new for them here (lua fields are handled)")
-            }
-
-            fn clone(self: &crate::core::RwLockReadGuard<'_, Self>, _: &mlua::Lua, _: &crate::instance::WeakManagedInstance) -> mlua::prelude::LuaResult<Self> {
-                Err(mlua::prelude::LuaError::RuntimeError("Cannot clone DataModelComponent".into()))
-            }
-
-            fn lua_get(self: &mut crate::core::RwLockReadGuard<'_, Self>, ptr: &crate::instance::DynInstance, lua: &mlua::Lua, key: &String) -> Option<mlua::prelude::LuaResult<mlua::prelude::LuaValue>> {
-                use crate::core::lua_macros::lua_getter;
-                use crate::core::inheritance_cast_to;
-                use crate::core::lua_macros::lua_invalid_argument;
-                use mlua::prelude::IntoLua;
-                match key.as_str() {
-                    #(#iinstance_lua_get),*,
-                    _ => None
-                }
-            }
-
-            fn lua_set(self: &mut crate::core::RwLockWriteGuard<'_, Self>, _ptr: &crate::instance::DynInstance, _lua: &mlua::Lua, key: &String, _value: &mlua::prelude::LuaValue) -> Option<mlua::prelude::LuaResult<()>> {
-                use mlua::prelude::IntoLua;
-                match key.as_str() {
-                    #(#iinstance_lua_set),*,
-                    _ => None
-                }
-            }
-        }
-
-        trait #trait_name {
-            fn #cgn(&self) -> crate::core::RwLockReadGuard<'_, #component_name>;
-            fn #cgmn(&self) -> crate::core::RwLockWriteGuard<'_, #component_name>;
-        }
-
-        struct #ident {
-            // base
-            instance: crate::core::RwLock<crate::instance::InstanceComponent>,
-            // all elements in hierarchy
-            service_provider: crate::core::RwLock<crate::instance::ServiceProviderComponent>,
-            // self
-            #snake_id: crate::core::RwLock<#component_name>,
-        }
-
-        impl crate::core::InheritanceBase for #ident {
-            fn inheritance_table(&self) -> crate::core::InheritanceTable {
-                crate::core::InheritanceTableBuilder::new()
-                    .insert_type::<#ident, dyn crate::instance::IObject>(|x| x, |x| x)
-                    .insert_type::<#ident, crate::instance::DynInstance>(|x| x, |x| x)
-                    #(.insert_type::<#ident, dyn #inherited>(|x| x, |x| x))*
-                    .insert_type::<#ident, dyn #trait_name>(|x| x, |x| x)
-                    .output()
-            }
-        }
-
-        impl crate::instance::IObject for #ident {
-            fn is_a(&self, class_name: &String) -> bool {
-                match class_name.as_str() {
-                    "DataModel" => true,
-                    //"ServiceProvider" => true,
-                    "Instance" => true,
-                    "Object" => true,
-                    #(#inherited_names => true),*,
-                    #s => true,
-                    _ => false
-                }
-            }
-            fn lua_get(&self, lua: &mlua::Lua, name: String) -> mlua::prelude::LuaResult<mlua::prelude::LuaValue> {
-                use crate::instance::IInstanceComponent;
-                self.#snake_id.read().unwrap().lua_get(self, lua, &name)
-                    .or_else(|| self.service_provider.read().unwrap().lua_get(self, lua, &name))
-                    .unwrap_or_else(|| self.instance.read().unwrap().lua_get(lua, &name))
-            }
-            fn get_changed_signal(&self) -> crate::userdata::ManagedRBXScriptSignal {
-                use crate::instance::IInstance;
-                self.get_instance_component().changed.clone()
-            }
-            fn get_property_changed_signal(&self, property: String) -> crate::userdata::ManagedRBXScriptSignal {
-                use crate::instance::IInstance;
-                self.get_instance_component().get_property_changed_signal(property).unwrap()
-            }
-            fn get_class_name(&self) -> &'static str { #s }
-        }
-
-        impl #trait_name for #ident {
-            fn #cgn(&self) -> crate::core::RwLockReadGuard<'_, #component_name> {
-                self.#snake_id.read().unwrap()
-            }
-
-            fn #cgmn(&self) -> crate::core::RwLockWriteGuard<'_, #component_name> {
-                self.#snake_id.write().unwrap()
-            }
-        }
-
-        impl crate::instance::IInstance for #ident {
-            fn get_instance_component(&self) -> crate::core::RwLockReadGuard<crate::instance::InstanceComponent> {
-                self.instance.read().unwrap()
-            }
-
-            fn get_instance_component_mut(&self) -> crate::core::RwLockWriteGuard<crate::instance::InstanceComponent> {
-                self.instance.write().unwrap()
-            }
-
-            fn lua_set(&self, lua: &mlua::Lua, name: String, val: mlua::prelude::LuaValue) -> mlua::prelude::LuaResult<()> {
-                use crate::instance::IInstanceComponent;
-                self.#snake_id.write().unwrap().lua_set(self, lua, &name, &val)
-                    .or_else(|| self.service_provider.write().unwrap().lua_set(self, lua, &name, &val))
-                    .unwrap_or_else(|| self.instance.write().unwrap().lua_set(lua, &name, val))
-            }
-
-            fn clone_instance(&self, _: &mlua::Lua) -> mlua::prelude::LuaResult<crate::instance::ManagedInstance> {
-                todo!("implement this cleanly too (same issue applies, but if no_clone this is optional)")
-            }
-        }
-
-        impl crate::instance::IServiceProvider for #ident {
-            fn get_service_provider_component(&self) -> crate::core::RwLockReadGuard<crate::instance::ServiceProviderComponent> {
-                self.service_provider.read().unwrap()
-            }
-
-            fn get_service_provider_component_mut(&self) -> crate::core::RwLockWriteGuard<crate::instance::ServiceProviderComponent> {
-                self.service_provider.write().unwrap()
-            }
-
-            fn get_service(&self, service_name: String) -> mlua::prelude::LuaResult<crate::instance::ManagedInstance> {
-                self.find_service(service_name)
-                    .and_then(|x|
-                        x.ok_or_else(|| mlua::prelude::LuaError::RuntimeError("Service not found".into()))
-                    )
-            }
-
-            fn find_service(&self, service_name: String) -> mlua::prelude::LuaResult<Option<crate::instance::ManagedInstance>> {
-                crate::instance::DynInstance::find_first_child_of_class(self, service_name)
-            }
-        }
-    }.into_token_stream().into()
-}
-
-// #[proc_macro_attribute]
-// pub fn property(_item: proc_macro::TokenStream, ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
-//     ts
-// }
-
-#[proc_macro_attribute]
-pub fn methods(
-    _item: proc_macro::TokenStream,
-    ts: proc_macro::TokenStream,
-) -> proc_macro::TokenStream {
-    let mut impl_block: ItemImpl = parse_macro_input!(ts);
-
-    if let syn::Type::Path(ref p) = *impl_block.self_ty {
-        let Some(id) = p.path.get_ident() else {
-            return Error::new(impl_block.self_ty.span(), "name not ident")
-                .into_compile_error()
-                .into();
-        };
-        let ident = "I".to_owned() + &id.to_string();
-
-        let mut path = Punctuated::new();
-        path.push(PathSegment {
-            ident: Ident::new(&ident, id.span()),
-            arguments: syn::PathArguments::None,
-        });
-
-        let mut p = Punctuated::new();
-        p.push(TypeParamBound::Trait(TraitBound {
-            paren_token: None,
-            modifier: syn::TraitBoundModifier::None,
-            lifetimes: None,
-            path: Path {
-                leading_colon: None,
-                segments: path,
-            },
-        }));
-
-        impl_block.self_ty = Box::new(syn::Type::TraitObject(TypeTraitObject {
-            dyn_token: Some(Token![dyn](id.span())),
-            bounds: p,
-        }));
-
-        return impl_block.to_token_stream().into();
-    } else {
-        return Error::new(impl_block.self_ty.span(), "unknown type name kind")
-            .into_compile_error()
-            .into();
-    }
-}
 
 #[proc_macro_attribute]
 pub fn lua_enum(
@@ -802,4 +353,488 @@ pub fn register(
         );
     }
     .into()
+}
+
+struct FastFlagArgs {
+    name: Ident,
+    _colon: Token![:],
+    ty: Type,
+    _eq: Token![=],
+    expr: Expr,
+}
+
+impl Parse for FastFlagArgs {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        Ok(FastFlagArgs {
+            name: input.parse()?,
+            _colon: input.parse()?,
+            ty: input.parse()?,
+            _eq: input.parse()?,
+            expr: input.parse()?,
+        })
+    }
+}
+
+#[proc_macro]
+pub fn fast_flag(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let FastFlagArgs { name, ty, expr, .. } = parse_macro_input!(ts as FastFlagArgs);
+
+    quote! {
+        #[derive(Clone, Copy, Hash, Debug)]
+        pub struct #name;
+        const _: () = {
+            use ::core::sync::atomic::{AtomicUsize, Ordering};
+            static ID: AtomicUsize = AtomicUsize::new(0);
+
+            impl bevy_rblx::core::FastFlagKey for #name {
+                type Target = #ty;
+                const NAME: &'static str = stringify!(#name);
+
+                fn fetch_internal_id() -> usize {
+                    ID.load(Ordering::Relaxed)
+                }
+                fn default_value() -> Self::Target {
+                    #expr
+                }
+                unsafe fn set_internal_id(id: usize) {
+                    ID.store(id, Ordering::Relaxed)
+                }
+            }
+            fn register_fastflag(ff: &mut bevy_rblx::internal::FastFlagKeyInserter) {
+                ff.insert_key::<#name>();
+            }
+            bevy_rblx::internal::inventory::submit!(bevy_rblx::internal::FastFlagKeyInsert(register_fastflag));
+        };
+    }.into()
+}
+
+#[proc_macro]
+pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let args = parse_macro_input!(ts as ClassArgs);
+
+    let class_name = args.class_name;
+    let class_name_members_ident = Ident::new(&format!("{class_name}Members"), class_name.span());
+    let inherits = args.inherits.iter();
+    let inherits_members = args
+        .inherits
+        .iter()
+        .map(|x| Ident::new(&format!("{x}Members"), x.span()))
+        .filter(|i| i != "ObjectMembers")
+        .map(|i| {
+            let mut punctuated = syn::punctuated::Punctuated::new();
+
+            punctuated.push(syn::PathSegment {
+                ident: i,
+                arguments: syn::PathArguments::None,
+            });
+            Type::Path(syn::TypePath {
+                qself: None,
+                path: syn::Path {
+                    leading_colon: None,
+                    segments: punctuated,
+                },
+            })
+        })
+        .chain(
+            args.require_components
+                .as_ref()
+                .cloned()
+                .unwrap_or_else(|| syn::punctuated::Punctuated::new()),
+        );
+
+    let vtable_name = Ident::new(
+        &format!("{}_VTABLE", class_name.to_string().to_ascii_uppercase()),
+        class_name.span(),
+    );
+
+    let members = {
+        let struct_spanned = {
+            let derive = quote_spanned! { args.members_token.span() =>
+                #[derive(Clone, bevy::prelude::Component)]
+            };
+            let head = quote_spanned! {args.members_token.span() =>
+                pub struct #class_name_members_ident
+            };
+            quote! {
+                #derive
+                #[require(#(#inherits_members),*)]
+                #head
+            }
+        };
+
+        let impl_header = quote_spanned! { args.members_token.span() =>
+            impl #class_name
+        };
+
+        let raw_fields = args
+            .members
+            .fields
+            .iter()
+            .filter(|x| x.r#virtual.is_none())
+            .map(|field| {
+                let vis = &field.visibility;
+                let name = &field.name;
+                let ty = &field.ty;
+                quote! {
+                    #vis #name: #ty
+                }
+            });
+
+        let impl_default = {
+            let impl_default_fields =
+                args.members
+                    .fields
+                    .iter()
+                    .filter(|x| x.r#virtual.is_none())
+                    .map(|field| {
+                        let name = &field.name;
+                        let default =
+                            field.default.as_ref().map(|x| quote! {#x}).unwrap_or_else(
+                                || quote_spanned! {name.span() => Default::default()},
+                            );
+                        quote! {
+                            #name: #default
+                        }
+                    });
+
+            quote! {
+                impl Default for #class_name_members_ident {
+                    fn default() -> Self {
+                        Self {
+                            #(#impl_default_fields),*
+                        }
+                    }
+                }
+            }
+        };
+
+        let getters_setters = args.members.fields.iter().filter(|x| x.r#priv.is_none()).map(|field| {
+            let name = &field.name;
+            let get_name = Ident::new(&format!("get_{name}"), name.span());
+            let set_name = Ident::new(&format!("set_{name}"), name.span());
+            let getter = if let Some((lua_method_closure, block)) = field.getter.as_ref() {
+                let args = &lua_method_closure.args;
+                let async_kw = &lua_method_closure.async_token;
+                let lua_arg = &lua_method_closure.lua_arg;
+                let self_arg = {
+                    let self_name = &lua_method_closure.self_name;
+                    let self_ty_span = lua_method_closure.self_ty.clone();
+                    let self_ty = quote_spanned! {self_ty_span.span() => bevy_rblx::internal::#self_ty_span};
+                    quote! {
+                        #self_name: #self_ty
+                    }
+                };
+                let lua_res = &lua_method_closure.lua_result;
+                let lt = &lua_method_closure.lt;
+                let gt = &lua_method_closure.gt;
+                let return_type = &lua_method_closure.return_type;
+                quote! {
+                    pub #async_kw fn #get_name(#lua_arg, #self_arg #args) -> #lua_res #lt #return_type #gt #block
+                }
+            } else {
+                let ty = &field.ty;
+                let field_name = &field.name;
+                let code_block = quote_spanned! { ty.span() =>
+                    let world_access = bevy_rblx::internal::WorldAccess::fetch_readonly(lua);
+                    let world = world_access.access_read_only();
+                    world.get::<#class_name_members_ident>(this).expect("object has members struct").#field_name.clone().into_lua(lua)
+                };
+                quote_spanned! { get_name.span() =>
+                    pub fn #get_name(lua: &Lua, this: bevy_rblx::internal::Entity, _vtable: &'static bevy_rblx::internal::ObjectVTable) -> LuaResult<LuaValue> {
+                        #code_block
+                    }
+                }
+            };
+            let setter = if let Some((lua_method_closure, block)) = field.setter.as_ref() {
+                let args = &lua_method_closure.args;
+                let async_kw = &lua_method_closure.async_token;
+                let lua_arg = &lua_method_closure.lua_arg;
+                let self_arg = {
+                    let self_name = &lua_method_closure.self_name;
+                    let self_ty_span = lua_method_closure.self_ty.clone();
+                    let self_ty = quote_spanned! {self_ty_span.span() => bevy_rblx::internal::#self_ty_span};
+                    quote! {
+                        #self_name: #self_ty
+                    }
+                };
+                let lua_res = &lua_method_closure.lua_result;
+                let lt = &lua_method_closure.lt;
+                let gt = &lua_method_closure.gt;
+                let return_type = &lua_method_closure.return_type;
+                quote! {
+                    pub #async_kw fn #set_name(#lua_arg, #self_arg #args) -> #lua_res #lt #return_type #gt #block
+                }
+            } else if field.read_only.is_none() && field.r#virtual.is_none() {
+                let ty = &field.ty;
+                let field_name = &field.name;
+                let code_block = quote_spanned! { ty.span() =>
+                    let mut world_access = bevy_rblx::internal::WorldAccess::fetch(lua);
+                    let world = world_access.access_synchronized()?;
+                    let field = &mut world.get_mut::<#class_name_members_ident>(this).expect("object has members struct").#field_name;
+                    let new_field: #ty = bevy_rblx::internal::FromLua::from_lua(new_value, lua)?;
+                    let diff = *field != new_field;
+                    if diff {
+                        *field = new_field;
+                    }
+                    Ok(diff)
+                };
+                quote_spanned! { get_name.span() =>
+                    pub fn #set_name(lua: &Lua, this: bevy_rblx::internal::Entity, _vtable: &'static bevy_rblx::internal::ObjectVTable, new_value: LuaValue) -> LuaResult<bool> {
+                        #code_block
+                    }
+                }
+            } else {
+                quote! {}
+            };
+            quote! {
+                #getter
+                #setter
+            }
+        }).filter(|x| !x.is_empty());
+
+        quote! {
+            #impl_header
+            {
+                #(#getters_setters)*
+            }
+            #struct_spanned
+            {
+                #(#raw_fields),*
+            }
+            #impl_default
+        }
+    };
+
+    let property_infos = {
+        args.members
+            .fields
+            .iter()
+            .filter(|f| f.r#priv.is_none())
+            .map(|field| {
+                let name = &field.name;
+                let renamed = field.rename.as_ref().cloned().unwrap_or_else(|| {
+                    syn::LitStr::new(&snake_case_to_camel_case(&name.to_string()), name.span())
+                });
+                let security_context = field
+                    .security
+                    .as_ref()
+                    .cloned()
+                    .unwrap_or_else(|| Ident::new("NONE", name.span()));
+                let get_name = Ident::new(&format!("get_{name}"), name.span());
+                let set_name = Ident::new(&format!("set_{name}"), name.span());
+
+                let setter = if field.read_only.is_some()
+                    || (field.setter.is_none() && field.r#virtual.is_some())
+                {
+                    quote_spanned! {field.read_only.span() => None}
+                } else {
+                    quote! {
+                        Some(#class_name::#set_name)
+                    }
+                };
+                let final_quote = quote! {
+                    bevy_rblx::internal::ObjectPropertyInfo {
+                        property_name: #renamed,
+                        security: bevy_rblx::internal::SecurityContext::#security_context,
+
+                        getter: #class_name::#get_name,
+                        setter: #setter
+                    }
+                };
+                if field.deprecated_aliases.is_empty() {
+                    final_quote
+                } else {
+                    let mut quotes = quote! {};
+
+                    for i in field.deprecated_aliases.iter() {
+                        quotes = quote! {
+                            #quotes
+                            #[cfg(feature="deprecated")]
+                            bevy_rblx::internal::ObjectPropertyInfo {
+                                property_name: #i,
+                                security: bevy_rblx::internal::SecurityContext::#security_context,
+
+                                getter: #class_name::#get_name,
+                                setter: #setter
+                            },
+                        }
+                    }
+                    quote! {
+                        #quotes
+                        #final_quote
+                    }
+                }
+            })
+    };
+
+    let methods = {
+        let processed_methods = args.methods.0.iter().map(|method_info| {
+            let parse::Method { sign: parse::LuaMethod { async_token, name, lua_arg, self_name, self_ty, args: args_1, lua_result, lt, return_type, gt }, code, .. } = method_info;
+            let disassembled_code = &code.block;
+            let security_guard = if let Some(security) = &method_info.meta.security {
+                quote_spanned! { security.span() =>
+                    {
+                        let current_context = bevy_rblx::internal::ThreadIdentity::fetch(lua).identity.get_security_contexts();
+                        let expected_context = bevy_rblx::internal::SecurityContext::#security;
+                        if !current_context.has(expected_context) {
+                            return Err(bevy_rblx::internal::LuaError::runtime(format!(
+                                "thread with security context {current_context} is missing {expected_context}"
+                            )));
+                        }
+                    }
+                }
+            } else {
+                quote! {}
+            };
+            let is_a_check = quote! {
+                {
+                    let world_access = bevy_rblx::internal::WorldAccess::fetch(lua);
+                    let world = world_access.access_read_only();
+                    if !world.get::<bevy_rblx::internal::ObjectHeader>(#self_name.entity()).expect("entity is object").vtable.method_resolution_order.iter().any(|v| v.class_name == stringify!(#class_name)) {
+                        return Err(bevy_rblx::internal::LuaError::runtime(concat!("object is not ", stringify!(#class_name))));
+                    }
+                }
+            };
+
+            let args_generated = args_1.add_self_type(self_name, self_ty);
+
+            quote! {
+                pub #async_token fn #name(#lua_arg #args_generated) -> #lua_result #lt #return_type #gt {
+                    #security_guard
+                    #is_a_check
+                    #disassembled_code
+                }
+            }
+        });
+        let header = quote_spanned! { args.methods_token.span() =>
+            impl #class_name
+        };
+        quote! {
+            #header
+            {
+                #(#processed_methods)*
+            }
+        }
+    };
+
+    let method_infos = {
+        args.methods.0.iter().map(|parse::Method { meta: parse::MethodMeta { rename, security, deprecated_aliases, .. }, sign: parse::LuaMethod { name, .. }, ..}| {
+            let actual_name = if rename.is_some() {
+                quote! {
+                    #rename
+                }
+            } else {
+                let new_name = syn::LitStr::new(&snake_case_to_camel_case(&name.to_string()), name.span());
+                quote! {
+                    #new_name
+                }
+            };
+            let security = security.as_ref().cloned().unwrap_or_else(|| Ident::new("NONE", name.span()));
+            let mut deprecated_quotes = quote!{};
+
+            for i in deprecated_aliases {
+                deprecated_quotes = quote!{
+                    #deprecated_quotes
+                    bevy_rblx::internal::ObjectMethodInfo {
+                        method_name: #i,
+                        security: bevy_rblx::internal::SecurityContext::#security,
+
+                        function: bevy_rblx::internal::CachedLuaFunction::new(move |l: &Lua| l.create_function(#class_name::#name).expect("function creation shouldnt error"))
+                    },
+                }
+            }
+            quote! {
+                #deprecated_quotes
+                bevy_rblx::internal::ObjectMethodInfo {
+                    method_name: #actual_name,
+                    security: bevy_rblx::internal::SecurityContext::#security,
+
+                    function: bevy_rblx::internal::CachedLuaFunction::new(move |l: &Lua| l.create_function(#class_name::#name).expect("function creation shouldnt error"))
+                }
+            }
+        })
+    };
+
+    let new_fn_define = if args.abstract_token.is_some() {
+        quote! {}
+    } else if let Some(custom) = &args.custom_constructor {
+        let parse::NewFn {
+            lua_arg,
+            entity_command_ident,
+            entity_command_type,
+            lua_result,
+            lt,
+            return_type,
+            gt,
+            code,
+        } = custom;
+        quote! {
+            impl #class_name {
+                fn constructor(#lua_arg, mut #entity_command_ident: #entity_command_type) -> #lua_result #lt #return_type #gt #code
+            }
+        }
+    } else {
+        quote_spanned! { class_name.span() =>
+            impl #class_name {
+                fn constructor(_lua: &Lua, mut entity_commands: bevy_rblx::internal::EntityCommands) -> bevy_rblx::internal::LuaResult<()> {
+                    entity_commands.insert(#class_name_members_ident::default());
+                    entity_commands.insert(bevy_rblx::internal::ObjectHeader::new(bevy_rblx::internal::OBJECT_VTABLES.get(stringify!(#class_name)).unwrap()));
+                    Ok(())
+                }
+            }
+        }
+    };
+
+    let new_fn = if let Some(abstract_token) = args.abstract_token.as_ref() {
+        quote_spanned! {abstract_token.span() => None}
+    } else if let Some(priv_token) = args.priv_token.as_ref() {
+        quote_spanned! {priv_token.span() =>
+            Protected(#class_name::constructor)
+        }
+    } else {
+        quote_spanned! { class_name.span() =>
+            Visible(#class_name::constructor)
+        }
+    };
+
+    let lua_send_check = {
+        let i = args.members.fields.iter().filter(|x| x.r#virtual.is_none()).map(|x| {
+            let ty = &x.ty;
+            quote_spanned! { ty.span() =>
+                bevy_rblx::internal::assert_impl_all!(#ty: bevy_rblx::internal::LuaSend);
+            }
+        });
+        quote! {
+            #(#i)*
+        }
+    };
+
+    quote! {
+        pub struct #class_name;
+
+        #members
+
+        #methods
+
+        #new_fn_define
+
+        #lua_send_check
+
+        const _: () = {
+            static #vtable_name: bevy_rblx::internal::ObjectVTable = bevy_rblx::internal::ObjectVTable {
+                class_name: stringify!(#class_name),
+                inherits: &[#(stringify!(#inherits)),*],
+
+                properties: &[#(#property_infos),*],
+                methods: &[#(#method_infos),*],
+
+                new: bevy_rblx::internal::ObjectNewFn::#new_fn,
+
+                method_resolution_order: ::std::sync::LazyLock::new(move || bevy_rblx::internal::ObjectVTable::generate_method_resolution_order(stringify!(#class_name))),
+                lazy_full_fields: ::std::sync::LazyLock::new(move || bevy_rblx::internal::ObjectVTable::fetch_full_fields(stringify!(#class_name))),
+            };
+
+            bevy_rblx::internal::inventory::submit!(bevy_rblx::internal::ObjectVTableCreationPointer(move || &#vtable_name));
+        };
+    }.into()
 }

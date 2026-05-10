@@ -4,9 +4,9 @@ pub(crate) use crate::core::refcounted::RefCountedEntityCommandsExt as _;
 mod sealed {
     use std::any::type_name;
 
-    use mlua::prelude::*;
+    use mlua::{ffi::lua_mainthread, lua_State, prelude::*};
 
-    pub(crate) trait IntoLuaThread {
+    pub trait IntoLuaThread {
         fn into_lua_thread(self, lua: &Lua) -> LuaResult<LuaThread>;
     }
 
@@ -126,7 +126,26 @@ mod sealed {
                 .flatten()
         }
     }
+
+    pub(crate) trait LuaExt: 'static {
+        fn to_pointer(&self) -> *mut lua_State;
+    }
+
+    impl LuaExt for Lua {
+        fn to_pointer(&self) -> *mut lua_State {
+            let mut lua_ptr = std::ptr::null_mut();
+            unsafe {
+                self.exec_raw::<()>((), |l| {
+                    lua_ptr = lua_mainthread(l);
+                })
+                .unwrap();
+            }
+            debug_assert!(!lua_ptr.is_null());
+            lua_ptr
+        }
+    }
 }
 
 pub(crate) use sealed::AnyUserDataTypedExt as _;
-pub(crate) use sealed::IntoLuaThread;
+pub use sealed::IntoLuaThread;
+pub(crate) use sealed::LuaExt;

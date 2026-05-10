@@ -11,3 +11,4 @@ proc-macro2 = "1.0.106"
 quote = "1.0.45"
 convert_case = "0.11.0"
 syn = { version = "2.0.96", features = ["full", "visit"] }
+concat-idents = "1.1.5"

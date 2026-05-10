@@ -1,7 +1,6 @@
 use std::time::Instant;
 
 use crate::core::WorldAccess;
-use crate::internal_prelude::*;
 use bevy::prelude::*;
 use mlua::ffi::{lua_debugtrace, lua_pop, lua_pushstring, lua_tothread};
 use mlua::prelude::*;
@@ -33,8 +32,9 @@ pub fn push_lua_error(lua: &Lua, thread: LuaThread, error: LuaError) {
     push_log(lua, MessageType::MessageError, msg);
 }
 
-pub fn push_log(lua: &Lua, msg_type: MessageType, msg: String) {
-    let mut world_access = WorldAccess::fetch(lua);
+pub fn push_log(lua: &Lua, msg_type: MessageType, msg: impl std::fmt::Display) {
+    let msg = msg.to_string();
+    let world_access = WorldAccess::fetch_readonly(lua);
     let mut commands = world_access.access_commands();
     let instant = Instant::now();
     commands.write_message(LoggedMessage {

@@ -1,13 +1,17 @@
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     mem::take,
+    sync::{
+        Arc, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
-use crate::core::{LuaSingleton, logs::push_lua_error};
+use crate::core::{FAST_FLAGS, LuaSingleton, logs::push_lua_error};
 use bevy::prelude::*;
-use bevy_rblx_derive::register;
-use mlua::prelude::*;
+use bevy_rblx_derive::{fast_flag, register};
+use mlua::{AppDataRef, prelude::*};
 
 use crate::internal_prelude::*;
 
@@ -27,6 +31,9 @@ struct EmptyCompiled(LuaFunction);
 #[derive(Default)]
 pub struct TaskScheduler {
     cell: RefCell<InternalTaskScheduler>,
+
+    watchdog: Cell<Option<Instant>>,
+    early_interrupt: Arc<AtomicBool>,
 }
 
 const fn empty(_: &Lua, _: ()) -> LuaResult<()> {
@@ -41,7 +48,9 @@ impl TaskScheduler {
         values: impl IntoLuaMulti,
     ) -> LuaResult<LuaThread> {
         let t = t.into_lua_thread(lua)?;
-        let _: () = t.resume(values)?;
+        if let Err(e) = t.resume::<()>(values) {
+            push_lua_error(lua, t.clone(), e);
+        }
         Ok(t)
     }
 
@@ -55,6 +64,18 @@ impl TaskScheduler {
         let pd = task.parallel_dispatch as usize;
         let t = t.into_lua_thread(lua)?;
         task.defer_threads[pd].push((t.clone(), values.into_lua_multi(lua)?));
+        Ok(t)
+    }
+    pub fn defer_high_priority(
+        &self,
+        lua: &Lua,
+        t: impl IntoLuaThread,
+        values: impl IntoLuaMulti,
+    ) -> LuaResult<LuaThread> {
+        let mut task = self.cell.borrow_mut();
+        let pd = task.parallel_dispatch as usize;
+        let t = t.into_lua_thread(lua)?;
+        task.defer_threads[pd].insert(0, (t.clone(), values.into_lua_multi(lua)?));
         Ok(t)
     }
 
@@ -114,6 +135,9 @@ impl TaskScheduler {
             }
             _ => Ok(()),
         }
+    }
+    pub fn is_desynchronized(&self) -> bool {
+        self.cell.borrow().parallel_dispatch
     }
     fn spawn_lua(lua: &Lua, mut values: LuaMultiValue) -> LuaResult<LuaThread> {
         let task = lua.app_data_ref::<TaskScheduler>().unwrap();
@@ -188,45 +212,118 @@ impl TaskScheduler {
         let task = lua.app_data_ref::<TaskScheduler>().unwrap();
         task.cancel(lua, thr)
     }
-    // TODO: Fix run logic
-    pub(crate) fn run(&self, lua: &Lua, parallel_dispatch: bool) {
+
+    fn watchdog_check(&self) -> bool {
+        (self.watchdog.get())
+            .expect("task scheduler is initialized and is currently executing this thread")
+            .checked_duration_since(Instant::now())
+            .is_some()
+    }
+    //TODO: implement the early interrupt flag
+    pub(crate) fn run(
+        &self,
+        lua: &Lua,
+        parallel_dispatch: bool,
+        allocated_duration: Duration,
+        hard_limit_duration: Option<Duration>,
+    ) -> bool {
+        assert!(
+            self.watchdog.get().is_none(),
+            "expected to not attempt running task scheduler inside itself"
+        );
         let pd = parallel_dispatch as usize;
-        self.cell.borrow_mut().parallel_dispatch = parallel_dispatch;
-        for (t, v) in take(&mut self.cell.borrow_mut().defer_threads[pd]) {
-            if t.status() == LuaThreadStatus::Resumable {
-                if let Err(e) = t.resume::<()>(v) {
-                    push_lua_error(lua, t, e);
-                }
+        let start = Instant::now();
+
+        self.early_interrupt.store(false, Ordering::Relaxed);
+
+        unsafe {
+            self.start_watchdog(hard_limit_duration);
+            if !FAST_FLAGS.fetch::<FFTaskSchedulerDisableWatchdog>() {
+                lua.set_interrupt(TaskScheduler::watchdog);
             }
         }
-
-        let mut still_waiting_delay = Vec::new();
-        for (t, i, d, v) in take(&mut self.cell.borrow_mut().delay_threads[pd]) {
-            if t.status() == LuaThreadStatus::Resumable {
-                if Instant::now().duration_since(i) >= d {
+        let mut repeat = true;
+        while repeat && start.elapsed() < allocated_duration {
+            self.cell.borrow_mut().parallel_dispatch = parallel_dispatch;
+            for (t, v) in take(&mut self.cell.borrow_mut().defer_threads[pd]) {
+                if t.status() == LuaThreadStatus::Resumable {
                     if let Err(e) = t.resume::<()>(v) {
                         push_lua_error(lua, t, e);
                     }
-                } else {
-                    still_waiting_delay.push((t, i, d, v));
                 }
             }
-        }
-        self.cell.borrow_mut().delay_threads[pd] = still_waiting_delay;
 
-        let mut still_waiting_delay = Vec::new();
-        for (t, i, d) in take(&mut self.cell.borrow_mut().wait_threads[pd]) {
-            if t.status() == LuaThreadStatus::Resumable {
-                if Instant::now().duration_since(i) >= d {
-                    if let Err(e) = t.resume::<()>(Instant::now().duration_since(i).as_secs_f64()) {
-                        push_lua_error(lua, t, e);
+            repeat &= self.cell.borrow().defer_threads[pd].len() > 0;
+            let mut still_waiting_delay = Vec::new();
+            for (t, i, d, v) in take(&mut self.cell.borrow_mut().delay_threads[pd]) {
+                if t.status() == LuaThreadStatus::Resumable {
+                    if Instant::now().duration_since(i) >= d {
+                        if let Err(e) = t.resume::<()>(v) {
+                            push_lua_error(lua, t, e);
+                        }
+                    } else {
+                        still_waiting_delay.push((t, i, d, v));
                     }
-                } else {
-                    still_waiting_delay.push((t, i, d));
                 }
             }
+            repeat &= self.cell.borrow().delay_threads[pd].len() > 0;
+            self.cell.borrow_mut().delay_threads[pd].append(&mut still_waiting_delay);
+
+            let mut still_waiting_delay = Vec::new();
+            for (t, i, d) in take(&mut self.cell.borrow_mut().wait_threads[pd]) {
+                if t.status() == LuaThreadStatus::Resumable {
+                    if Instant::now().duration_since(i) >= d {
+                        if let Err(e) =
+                            t.resume::<()>(Instant::now().duration_since(i).as_secs_f64())
+                        {
+                            push_lua_error(lua, t, e);
+                        }
+                    } else {
+                        still_waiting_delay.push((t, i, d));
+                    }
+                }
+            }
+            repeat &= self.cell.borrow().wait_threads[pd].len() > 0;
+            self.cell.borrow_mut().wait_threads[pd].append(&mut still_waiting_delay);
         }
-        self.cell.borrow_mut().wait_threads[pd] = still_waiting_delay;
+        unsafe {
+            lua.remove_interrupt();
+            self.stop_watchdog();
+        }
+        self.early_interrupt.load(Ordering::Relaxed)
+    }
+    pub fn fetch(lua: &Lua) -> AppDataRef<'_, TaskScheduler> {
+        lua.app_data_ref::<TaskScheduler>()
+            .expect("task scheduler is initialized")
+    }
+
+    pub unsafe fn start_watchdog(&self, hard_limit_duration: Option<Duration>) {
+        let start = Instant::now();
+        let hard_limit_duration = hard_limit_duration.unwrap_or(Duration::from_secs(10));
+        let watchdog_time = start
+            .checked_add(hard_limit_duration)
+            .expect("expected no bugs in time system");
+
+        self.watchdog.set(Some(watchdog_time));
+    }
+    pub unsafe fn stop_watchdog(&self) {
+        self.watchdog.set(None);
+    }
+
+    pub fn get_early_interrupt_flag(&self) -> Weak<AtomicBool> {
+        Arc::downgrade(&self.early_interrupt)
+    }
+
+    fn watchdog(lua: &Lua) -> LuaResult<LuaVmState> {
+        if lua
+            .app_data_ref::<Self>()
+            .expect("task scheduler is init")
+            .watchdog_check()
+        {
+            Ok(LuaVmState::Continue)
+        } else {
+            Err(LuaError::runtime("script exhausted execution time"))
+        }
     }
 }
 
@@ -258,3 +355,5 @@ impl LuaSingleton for TaskScheduler {
         lua.globals().raw_set("task", task)
     }
 }
+
+fast_flag!(FFTaskSchedulerDisableWatchdog: bool = false);

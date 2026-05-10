@@ -4,8 +4,9 @@ use bevy_rblx::core::LuaSingleton;
 bevy_rblx_derive::create_enums!([
     AnimatorRetargetingMode,
     AvatarUnificationMode,
-    ClientAnimatorThrottlingMode,
     Axis,
+    ClientAnimatorThrottlingMode,
+    CreatorType,
     FluidForces,
     IKControlConstraintSupport,
     MeshPartHeadsAndAccessories,
@@ -26,6 +27,7 @@ bevy_rblx_derive::create_enums!([
     RotationOrder,
     RunContext,
     SandboxedInstanceMode,
+    SecurityCapability,
     SignalBehavior,
     StreamOutBehavior,
     StreamingIntegrityMode
