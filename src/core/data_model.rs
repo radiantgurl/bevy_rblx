@@ -82,11 +82,15 @@ pub fn bind_close_system_runner(mut app_exit: MessageReader<AppExit>, mut c: Com
             let closing_signal = w
                 .query::<&DataModelMembers>()
                 .single(w)
-                .expect("root instance exists while exiting app").closing_signal.reference();
+                .expect("root instance exists while exiting app")
+                .closing_signal
+                .reference();
             let close = w
                 .query::<&ServiceProviderMembers>()
                 .single(w)
-                .expect("root instance exists while exiting app").close.reference();
+                .expect("root instance exists while exiting app")
+                .close
+                .reference();
             {
                 let mut wa = WorldAccess::default();
                 let unsafe_world = w.as_unsafe_world_cell();

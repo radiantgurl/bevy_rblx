@@ -1,3 +1,6 @@
+use std::mem::take;
+
+use crate::core::luau::ContainerProvenance;
 use crate::enums::MessageType;
 use crate::userdata::{LuaFreeValue, RBXScriptSignal};
 use crate::{core::WorldAccess, internal_prelude::*, userdata::ObjectRef};
@@ -13,7 +16,7 @@ use lazy_static::lazy_static;
 use mlua::prelude::*;
 
 use crate::core::object::ObjectNewFn;
-use crate::core::{ObjectHeader, ObjectVTableCreationPointer, push_log};
+use crate::core::{CollectionService, DataModel, ObjectHeader, ObjectVTableCreationPointer, ServiceProvider, push_log};
 
 pub struct InstanceConstructor {
     visible: HashMap<&'static str, fn(&Lua, EntityCommands) -> LuaResult<()>>,
@@ -94,11 +97,73 @@ impl InstanceConstructor {
     }
 }
 
-#[derive(Clone, Copy, Component, Debug)]
-pub struct ContainerProvenance(pub Entity);
-
 #[derive(Clone, Copy, Component, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct RootInstance;
+
+pub fn remove_parent(lua: &Lua, this: Entity, new_parent: Option<Entity>) -> LuaResult<()> {
+    let mut events: Vec<RBXScriptSignal> = Vec::new();
+    {
+        let mut wa = WorldAccess::fetch(lua);
+        let world = wa.access_synchronized()?;
+
+        let mut ancestors_qs = world.query::<&ChildOf>();
+        let ancestors = ancestors_qs.query(&*world);
+        let parent = ancestors.get(this.entity()).ok().map(|x| x.0);
+        if parent.is_none() {
+            return Ok(());
+        }
+        
+        for a in ancestors.iter_ancestors(this.entity()) {
+            let ancestor_members = InstanceMembers::fetch_members(&*world, a);
+            events.push(ancestor_members.descendant_removing.clone());
+        }
+    }
+    for ev in take( &mut events) {
+        ev.fire_in_lua(lua, true, ObjectRef::new(lua, this))?
+    }
+    
+    let child_removed = {
+        let mut wa = WorldAccess::fetch(lua);
+        let world = wa.access_synchronized()?;
+        let parent = world.get::<ChildOf>(this).unwrap().0;
+        world.entity_mut(parent).remove::<ChildOf>();
+        
+        let mut descendants_qs = world.query::<&Children>();
+        let descendants = descendants_qs.query(world);
+
+        for descendant in descendants.iter_descendants(this) {
+            let descendant_members = InstanceMembers::fetch_members(&*world, descendant);
+            events.push(descendant_members.ancestry_changed.clone());
+        }
+        
+        let parent_members = InstanceMembers::fetch_members(&*world, parent);
+        parent_members.child_removed.clone()
+    };
+
+    child_removed.fire_in_lua(lua, true, ObjectRef::new(lua, this))?;
+    let new_parent = new_parent.map(|x| ObjectRef::new(lua, x));
+    for ev in events {
+        ev.fire_in_lua(lua, true, (ObjectRef::new(lua, this), new_parent.clone()))?;
+    }
+
+    Ok(())
+}
+pub fn add_parent(lua: &Lua, this: Entity, new_parent: Entity) -> LuaResult<()> {
+    let mut events: Vec<RBXScriptSignal> = Vec::new();
+    {
+        let mut wa = WorldAccess::fetch(lua);
+        let world = wa.access_synchronized()?;
+        world.entity_mut(new_parent).add_child(this);
+        let mut ancestors_qs = world.query::<&ChildOf>();
+        let ancestors = ancestors_qs.query(&*world);
+        events.push(InstanceMembers::fetch_members(world, this).child_added.clone());
+        for ancestor in ancestors.iter_ancestors(this) {
+            events.push(InstanceMembers::fetch_members(world, ancestor).descendant_added.clone())
+        }
+    }
+
+    Ok(())
+}
 
 register_class! {
     #[require_components(Name, Children)]
@@ -150,7 +215,26 @@ register_class! {
             }
         }]
         #[setter=fn(lua: &Lua, this: Entity, _vtable: &'static ObjectVTable, new_value: LuaValue) -> LuaResult<bool> {
-            todo!()
+            let obj_ref = Option::<ObjectRef>::from_lua(new_value, lua)?;
+            {
+                let wa = WorldAccess::fetch_readonly(lua);
+                let world = wa.access_read_only();
+                if world.get::<ChildOf>(this).map(|c| c.0) == obj_ref.as_ref().map(|x| x.entity()) {
+                    return Ok(false); // no update
+                }
+                let members = InstanceMembers::fetch_members(&*world, this);
+                if members.parent_protected || members.destroyed {
+                    push_log(lua, MessageType::MessageWarning, format!("Failed to change instance Parent property, the property is locked."));
+                    return Ok(false); // no update
+                }
+            }
+
+            // This internal order is: DescendantRemoving -> ChildRemoved -> AncestryChanged -> ChildAdded -> DescendantAdded
+            remove_parent(lua, this, obj_ref.as_ref().map(|x| x.entity()))?;
+            if let Some(new_parent) = obj_ref {
+                add_parent(lua, this, new_parent.entity())?;
+            }
+            Ok(true)
         }]
         #[deprecated_alias="parent"]
         virtual parent: Option<ObjectRef>,
@@ -176,7 +260,22 @@ register_class! {
     }
     methods {
         fn add_tag(lua: &Lua, this: ObjectRef, tag: String) -> LuaResult<()> {
-            todo!()
+            let cs = {
+                let mut wa = WorldAccess::fetch(lua);
+                let world = wa.access_synchronized()?;
+                
+                let mut root_instance_qs = world.query_filtered::<Entity, With<RootInstance>>();
+                let game_instance = root_instance_qs.single(world).expect("single game instance");
+
+                let mut objects_qs = world.query::<&ObjectHeader>();
+                let children = world.get::<Children>(game_instance).unwrap();
+                children.iter().filter(|e| {
+                    let header = objects_qs.get(world, *e).expect("expected object");
+
+                    header.vtable.class_name == "CollectionService"
+                }).next().expect("collection service exists")
+            };
+            CollectionService::add_tag(lua, (ObjectRef::new(lua, cs), this, tag))
         }
         fn clear_all_children(lua: &Lua, this: ObjectRef) -> LuaResult<()> {
             let children = {
@@ -241,6 +340,7 @@ register_class! {
                 (vtable, destroying)
             };
 
+            destroying.fire_in_lua(lua, true, ())?;
             {
                 let mut world_access = WorldAccess::fetch(lua);
                 let world = world_access.access_synchronized()?;
@@ -248,8 +348,6 @@ register_class! {
 
                 members.parent_protected = false;
             }
-
-            destroying.fire_in_lua(lua, true, ())?;
             Instance::set_parent(lua, this.entity(), vtable, LuaValue::Nil)?;
             {
                 let mut world_access = WorldAccess::fetch(lua);
@@ -344,7 +442,9 @@ register_class! {
             Ok(None)
         }
         fn get_actor(lua: &Lua, this: ObjectRef) -> LuaResult<Option<ObjectRef>> {
-            Instance::find_first_ancestor_of_class(lua, (this, "Actor".to_owned()))
+            let wa = WorldAccess::fetch_readonly(lua);
+            let world = wa.access_read_only();
+            Ok(world.get::<ContainerProvenance>(this.entity()).map(|p| ObjectRef::new(lua, p.0)))
         }
         fn get_attribute(lua: &Lua, this: ObjectRef, key: String) -> LuaResult<LuaValue> {
             let world_access = WorldAccess::fetch_readonly(lua);
@@ -378,52 +478,105 @@ register_class! {
         }
         #[deprecated_alias="getChildren"]
         fn get_children(lua: &Lua, this: ObjectRef) -> LuaResult<Vec<ObjectRef>> {
-            todo!()
+            let wa = WorldAccess::fetch_readonly(lua);
+            let world = wa.access_read_only();
+
+            Ok(world.get::<Children>(this.entity())
+                .expect("instance has children")
+                .iter()
+                .map(|e| ObjectRef::new(lua, e))
+                .collect::<Vec<_>>()
+            )
         }
         fn get_debug_id(lua: &Lua, this: ObjectRef, scope_len: u64) -> LuaResult<String> {
-            todo!()
+            lua_todo!()
         }
         fn get_descendants(lua: &Lua, this: ObjectRef) -> LuaResult<Vec<ObjectRef>> {
-            todo!()
+            lua_todo!()
         }
         fn get_full_name(lua: &Lua, this: ObjectRef) -> LuaResult<String> {
-            todo!()
+            lua_todo!()
         }
         fn get_styled(lua: &Lua, this: ObjectRef, name: String, selector: Option<String>) -> LuaResult<LuaValue> {
-            todo!()
+            lua_todo!()
         }
         fn get_styled_property_changed_signal(lua: &Lua, this: ObjectRef, property: String) -> LuaResult<LuaValue> {
-            todo!()
+            lua_todo!()
         }
-        fn get_tags(lua: &Lua, this: ObjectRef) -> LuaResult<LuaTable> {
-            todo!()
+        fn get_tags(lua: &Lua, this: ObjectRef) -> LuaResult<LuaValue> {
+            let cs = {
+                let wa = WorldAccess::fetch_readonly(lua);
+                let world = wa.access_read_only();
+                
+                let mut root_instance_qs = world.try_query_filtered::<Entity, With<RootInstance>>().unwrap();
+                let game_instance = root_instance_qs.single(&*world).expect("single game instance");
+
+                let mut objects_qs = world.try_query::<&ObjectHeader>().unwrap();
+                let children = world.get::<Children>(game_instance).unwrap();
+                children.iter().filter(|e| {
+                    let header = objects_qs.get(&*world, *e).expect("expected object");
+
+                    header.vtable.class_name == "CollectionService"
+                }).next().expect("collection service exists")
+            };
+            CollectionService::get_tags(lua, (ObjectRef::new(lua, cs), this))
         }
         fn has_tag(lua: &Lua, this: ObjectRef, tag: String) -> LuaResult<bool> {
-            todo!()
+            let cs = {
+                let wa = WorldAccess::fetch_readonly(lua);
+                let world = wa.access_read_only();
+                
+                let mut root_instance_qs = world.try_query_filtered::<Entity, With<RootInstance>>().unwrap();
+                let game_instance = root_instance_qs.single(&*world).expect("single game instance");
+
+                let mut objects_qs = world.try_query::<&ObjectHeader>().unwrap();
+                let children = world.get::<Children>(game_instance).unwrap();
+                children.iter().filter(|e| {
+                    let header = objects_qs.get(&*world, *e).expect("expected object");
+
+                    header.vtable.class_name == "CollectionService"
+                }).next().expect("collection service exists")
+            };
+            CollectionService::has_tag(lua, (ObjectRef::new(lua, cs), this, tag))
         }
         fn is_ancestor_of(lua: &Lua, this: ObjectRef, descendant: ObjectRef) -> LuaResult<bool> {
-            todo!()
+            lua_todo!()
         }
         #[deprecated_alias="isDescendantOf"]
         fn is_descendant_of(lua: &Lua, this: ObjectRef, ancestor: ObjectRef) -> LuaResult<bool> {
-            todo!()
+            lua_todo!()
         }
         fn is_property_modified(lua: &Lua, this: ObjectRef, property: String) -> LuaResult<bool> {
-            todo!()
+            lua_todo!()
         }
         fn query_descendants(lua: &Lua, this: ObjectRef, selector: String) -> LuaResult<LuaValue> {
-            todo!()
+            lua_todo!()
         }
 
         // fn remove(lua: &Lua, this: ObjectRef) ->
         fn remove_tag(lua: &Lua, this: ObjectRef, tag: String) -> LuaResult<()> {
-            todo!()
+            let cs = {
+                let mut wa = WorldAccess::fetch(lua);
+                let world = wa.access_synchronized()?;
+                
+                let mut root_instance_qs = world.query_filtered::<Entity, With<RootInstance>>();
+                let game_instance = root_instance_qs.single(world).expect("single game instance");
+
+                let mut objects_qs = world.query::<&ObjectHeader>();
+                let children = world.get::<Children>(game_instance).unwrap();
+                children.iter().filter(|e| {
+                    let header = objects_qs.get(world, *e).expect("expected object");
+
+                    header.vtable.class_name == "CollectionService"
+                }).next().expect("collection service exists")
+            };
+            CollectionService::remove_tag(lua, (ObjectRef::new(lua, cs), this, tag))
         }
         fn reset_property_to_default(lua: &Lua, this: ObjectRef, property: String) -> LuaResult<()> {
-            todo!()
+            lua_todo!()
         }
         fn set_attribute(lua: &Lua, this: ObjectRef, attribute: String, value: LuaValue) -> LuaResult<()> {
-            todo!()
+            lua_todo!()
         }
     }
 }

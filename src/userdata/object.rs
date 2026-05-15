@@ -45,13 +45,13 @@ impl ObjectRef {
         }
         Self {
             0: self.0,
-            1: lua.weak()
+            1: lua.weak(),
         }
     }
     pub unsafe fn clone_no_inc_ref(&self) -> Self {
         Self {
             0: self.0,
-            1: self.1.clone()
+            1: self.1.clone(),
         }
     }
 }

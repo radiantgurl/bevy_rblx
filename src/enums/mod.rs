@@ -26,6 +26,7 @@ bevy_rblx_derive::create_enums!([
     RollOutState,
     RotationOrder,
     RunContext,
+    RunState,
     SandboxedInstanceMode,
     SecurityCapability,
     SignalBehavior,

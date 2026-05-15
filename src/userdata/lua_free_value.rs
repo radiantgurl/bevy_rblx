@@ -1,6 +1,6 @@
 use crate::userdata::ObjectRef;
 
-use bevy::{ecs::entity::Entity};
+use bevy::ecs::entity::Entity;
 use mlua::{
     ffi::{lua_Integer, lua_Number},
     prelude::*,
@@ -22,7 +22,7 @@ pub enum LuaFreeValue {
 
 impl FromLua for LuaFreeValue {
     fn from_lua(value: LuaValue, _lua: &Lua) -> LuaResult<Self> {
-        match value { 
+        match value {
             LuaNil => Ok(Self::Nil),
             LuaValue::Boolean(b) => Ok(LuaFreeValue::Boolean(b)),
             LuaValue::LightUserData(_) => todo!(),

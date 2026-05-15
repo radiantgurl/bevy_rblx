@@ -18,6 +18,7 @@ use crate::internal_prelude::*;
 #[derive(Default)]
 struct InternalTaskScheduler {
     defer_threads: [Vec<(LuaThread, LuaMultiValue)>; 2],
+    defer_next_threads: [Vec<(LuaThread, LuaMultiValue)>; 2],
     delay_threads: [Vec<(LuaThread, Instant, Duration, LuaMultiValue)>; 2],
 
     wait_threads: [Vec<(LuaThread, Instant, Duration)>; 2],
@@ -76,6 +77,18 @@ impl TaskScheduler {
         let pd = task.parallel_dispatch as usize;
         let t = t.into_lua_thread(lua)?;
         task.defer_threads[pd].insert(0, (t.clone(), values.into_lua_multi(lua)?));
+        Ok(t)
+    }
+    pub fn defer_next_frame(
+        &self,
+        lua: &Lua,
+        t: impl IntoLuaThread,
+        values: impl IntoLuaMulti,
+    ) -> LuaResult<LuaThread> {
+        let mut task = self.cell.borrow_mut();
+        let pd = task.parallel_dispatch as usize;
+        let t = t.into_lua_thread(lua)?;
+        task.defer_next_threads[pd].push((t.clone(), values.into_lua_multi(lua)?));
         Ok(t)
     }
 
@@ -212,6 +225,29 @@ impl TaskScheduler {
         let task = lua.app_data_ref::<TaskScheduler>().unwrap();
         task.cancel(lua, thr)
     }
+    #[cfg(feature = "deprecated")]
+    fn spawn_deprecated_lua(lua: &Lua, mut values: LuaMultiValue) -> LuaResult<LuaThread> {
+        let task = lua.app_data_ref::<TaskScheduler>().unwrap();
+        let ft = values.pop_front().unwrap_or_default();
+        task.defer_next_frame(lua, ft, values)
+    }
+    #[cfg(feature = "deprecated")]
+    async fn wait_deprecated_lua(lua: Lua, (delay,): (f64,)) -> LuaResult<f64> {
+        let start = Instant::now();
+        let new_duration = Duration::from_secs_f64(delay);
+        loop {
+            {
+                let task = lua
+                    .app_data_ref::<TaskScheduler>()
+                    .expect("expected task scheduler to be init");
+                task.defer_next_frame(&lua, lua.current_thread(), ())?;
+            }
+            lua.yield_with::<()>(()).await?;
+            if start.elapsed() >= new_duration {
+                return Ok(start.elapsed().as_secs_f64());
+            }
+        }
+    }
 
     fn watchdog_check(&self) -> bool {
         (self.watchdog.get())
@@ -219,11 +255,11 @@ impl TaskScheduler {
             .checked_duration_since(Instant::now())
             .is_some()
     }
-    //TODO: implement the early interrupt flag
     pub(crate) fn run(
         &self,
         lua: &Lua,
         parallel_dispatch: bool,
+        new_frame: bool,
         allocated_duration: Duration,
         hard_limit_duration: Option<Duration>,
     ) -> bool {
@@ -242,6 +278,17 @@ impl TaskScheduler {
                 lua.set_interrupt(TaskScheduler::watchdog);
             }
         }
+
+        if new_frame {
+            for (t, v) in take(&mut self.cell.borrow_mut().defer_next_threads[pd]) {
+                if t.status() == LuaThreadStatus::Resumable {
+                    if let Err(e) = t.resume::<()>(v) {
+                        push_lua_error(lua, t, e);
+                    }
+                }
+            }
+        }
+
         let mut repeat = true;
         while repeat && start.elapsed() < allocated_duration {
             self.cell.borrow_mut().parallel_dispatch = parallel_dispatch;
@@ -285,6 +332,8 @@ impl TaskScheduler {
             }
             repeat &= self.cell.borrow().wait_threads[pd].len() > 0;
             self.cell.borrow_mut().wait_threads[pd].append(&mut still_waiting_delay);
+
+            repeat &= !self.early_interrupt.load(Ordering::Relaxed)
         }
         unsafe {
             lua.remove_interrupt();
@@ -352,7 +401,21 @@ impl LuaSingleton for TaskScheduler {
 
         task.set_readonly(true);
 
-        lua.globals().raw_set("task", task)
+        lua.globals().raw_set("task", task)?;
+
+        #[cfg(feature = "deprecated")]
+        {
+            lua.globals().raw_set(
+                "spawn",
+                lua.create_function(TaskScheduler::spawn_deprecated_lua)?,
+            )?;
+            lua.globals().raw_set(
+                "wait",
+                lua.create_function(TaskScheduler::wait_deprecated_lua)?,
+            )?;
+        }
+
+        Ok(())
     }
 }
 

@@ -4,8 +4,7 @@ use parse::AttrArguments;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{
-    Error, Expr, ExprArray, Ident, ItemEnum, ItemImpl, Token, Type, parse::Parse,
-    parse_macro_input, spanned::Spanned,
+    Error, Expr, ExprArray, Ident, ItemEnum, ItemImpl, LitStr, Token, Type, parse::Parse, parse_macro_input, spanned::Spanned
 };
 use utils::camel_case_to_snake_case;
 
@@ -592,6 +591,19 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
             }
         }).filter(|x| !x.is_empty());
 
+        let impl_member_fetchers = {
+            let new_lit_str = LitStr::new(&format!("expected {class_name}"), class_name.span());
+            quote_spanned! {class_name.span() =>
+                impl #class_name_members_ident {
+                    pub fn fetch_members<'a>(world: &'a ::bevy::prelude::World, this: ::bevy::prelude::Entity) -> &'a Self {
+                        world.get::<#class_name_members_ident>(this).expect(#new_lit_str)
+                    }
+                    pub fn fetch_members_mut<'a>(world: &'a mut ::bevy::prelude::World, this: ::bevy::prelude::Entity) -> ::bevy::prelude::Mut<'a, Self> {
+                        world.get_mut::<#class_name_members_ident>(this).expect(#new_lit_str)
+                    }
+                }
+            }
+        };
         quote! {
             #impl_header
             {
@@ -602,6 +614,7 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 #(#raw_fields),*
             }
             #impl_default
+            #impl_member_fetchers
         }
     };
 
@@ -798,12 +811,17 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
     };
 
     let lua_send_check = {
-        let i = args.members.fields.iter().filter(|x| x.r#virtual.is_none()).map(|x| {
-            let ty = &x.ty;
-            quote_spanned! { ty.span() =>
-                bevy_rblx::internal::assert_impl_all!(#ty: bevy_rblx::internal::LuaSend);
-            }
-        });
+        let i = args
+            .members
+            .fields
+            .iter()
+            .filter(|x| x.r#virtual.is_none())
+            .map(|x| {
+                let ty = &x.ty;
+                quote_spanned! { ty.span() =>
+                    bevy_rblx::internal::assert_impl_all!(#ty: bevy_rblx::internal::LuaSend);
+                }
+            });
         quote! {
             #(#i)*
         }

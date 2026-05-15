@@ -2,15 +2,20 @@ use std::mem::take;
 
 use bevy::{
     DefaultPlugins, MinimalPlugins,
-    app::{App, AppLabel, Last, Startup},
-    ecs::world::{CommandQueue, World},
+    app::{App, AppLabel, Last, PreUpdate, Startup},
+    camera::Camera2d,
+    ecs::{
+        entity::Entity, schedule::IntoScheduleConfigs, system::Local, world::{CommandQueue, World}
+    }, time::Time,
 };
-use bevy_inspector_egui::bevy_egui::EguiPlugin;
+use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 
 use crate::{
     core::{
-        LuauContainer, RefCountedPlugin, TaskScheduler, bind_close_system_runner,
+        LuauContainer, RefCountedEntityCommandsExt as _, RefCountedPlugin,
+        bind_close_system_runner,
         instance::NewInstanceEvent,
+        luau::{assign_provenance, create_provenance},
     },
     userdata::instance_new,
 };
@@ -25,31 +30,24 @@ pub fn initialize(w: &mut World) {
         let unsafe_world = w.as_unsafe_world_cell();
         unsafe {
             container.enter_scope_sync(unsafe_world);
-            let task = container
-                .lua
-                .app_data_ref::<TaskScheduler>()
-                .expect("task scheduler exists");
-            task.start_watchdog(None);
         }
 
         root_instance = instance_new(&container.lua, "DataModel".to_owned())
             .expect("datamodel was created")
             .entity();
 
-        unsafe {
-            {
-                let task = container
-                    .lua
-                    .app_data_ref::<TaskScheduler>()
-                    .expect("task scheduler exists");
-                task.stop_watchdog();
-            }
-            container.exit_scope(Some(&mut commands));
-        }
+        container.exit_scope(Some(&mut commands));
     }
-    commands.apply(w);
+    {
+        let mut c = w.commands();
+        c.entity(root_instance).protect();
+    }
 
     w.entity_mut(root_instance).insert(container);
+}
+
+pub fn emit_event(startup_args: Local<Option<(Entity,)>>, w: &mut World) {
+    
 }
 
 #[derive(AppLabel, Clone, Copy, Hash, Debug, Default, PartialEq, Eq)]
@@ -59,8 +57,21 @@ impl Engine {
     fn additional(app: &mut App) {
         app.add_plugins(RefCountedPlugin);
         app.add_message::<NewInstanceEvent>();
+        app.insert_resource(Time::from_hz(60.0));
 
-        app.add_systems(Startup, initialize);
+        app.add_systems(
+            Startup,
+            (
+                initialize,
+                create_provenance,
+                assign_provenance,
+            ).chain(),
+        );
+        // app.add_systems(First, repl_receive);
+        app.add_systems(PreUpdate, (
+            create_provenance,
+            assign_provenance
+        ).chain());
         app.add_systems(Last, bind_close_system_runner);
     }
 
@@ -79,6 +90,10 @@ impl Engine {
 
         app.add_plugins(DefaultPlugins);
         app.add_plugins(EguiPlugin::default());
+        if cfg!(debug_assertions) {
+            app.add_plugins(WorldInspectorPlugin::default());
+            app.world_mut().spawn(Camera2d);
+        }
 
         Self::additional(&mut app);
 

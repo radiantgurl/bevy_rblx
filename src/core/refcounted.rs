@@ -144,6 +144,7 @@ impl RefCounted {
 pub trait RefCountedEntityCommandsExt: Sized {
     unsafe fn inc_ref(&mut self) -> &mut Self;
     unsafe fn dec_ref(&mut self) -> &mut Self;
+    fn protect(&mut self) -> &mut Self;
 }
 
 pub mod commands {
@@ -164,6 +165,12 @@ pub mod commands {
         };
         Ok(())
     }
+    pub fn protect_command(mut w: EntityWorldMut) -> Result<()> {
+        w.get_mut::<RefCounted>()
+            .ok_or_else(|| "not a refcounted")?
+            .protect();
+        Ok(())
+    }
 }
 
 use bevy_rblx_derive::fast_flag;
@@ -176,6 +183,9 @@ impl<'a> RefCountedEntityCommandsExt for EntityCommands<'a> {
 
     unsafe fn dec_ref(&mut self) -> &mut Self {
         self.queue(dec_ref_command)
+    }
+    fn protect(&mut self) -> &mut Self {
+        self.queue(protect_command)
     }
 }
 

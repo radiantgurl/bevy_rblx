@@ -1,17 +1,31 @@
-use bevy::{ecs::entity::Entity, platform::collections::{HashMap, HashSet}};
+use bevy::{
+    ecs::entity::Entity,
+    platform::collections::{HashMap, HashSet},
+};
 
-use bevy_rblx_derive::register_class;
 use crate::internal_prelude::*;
+use bevy_rblx_derive::register_class;
 use mlua::prelude::*;
 
-use crate::{core::{RefCounted, WorldAccess, ServiceMembers}, userdata::{LuaSendRBXScriptConnection, ObjectRef, RBXScriptSignal}};
+use crate::{
+    core::{RefCounted, ServiceMembers, WorldAccess},
+    userdata::{LuaSendRBXScriptConnection, ObjectRef, RBXScriptSignal},
+};
 
 use super::InstanceMembers;
 
 fn on_destroy(lua: &Lua, (this, instance): (ObjectRef, ObjectRef)) -> LuaResult<()> {
-    let world_access = WorldAccess::fetch_readonly(lua);
-    let world = world_access.access_commands();
-    todo!()
+    let tags = {
+        let world_access = WorldAccess::fetch_readonly(lua);
+        let world = world_access.access_read_only();
+        let members = world.get::<CollectionServiceMembers>(this.entity()).expect("this is CollectionService");
+        members.rev_instances.get(&instance.entity()).expect("instance has tags still").iter().cloned().collect::<Vec<_>>()
+    };
+    let remove_tag = lua.create_function(CollectionService::remove_tag)?;
+    for tag in tags.into_iter() {
+        remove_tag.queue_call(lua, (this.clone_lua(lua), instance.clone_lua(lua), tag))
+    }
+    Ok(())
 }
 
 register_class! {

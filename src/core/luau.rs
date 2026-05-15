@@ -1,4 +1,7 @@
-use crate::{core::FAST_FLAGS, internal_prelude::*};
+use crate::{
+    core::{FAST_FLAGS, ObjectHeader},
+    internal_prelude::*,
+};
 
 use bevy::{
     ecs::world::{CommandQueue, unsafe_world_cell::UnsafeWorldCell},
@@ -170,3 +173,35 @@ fast_flag!(FFLuauForceJit: bool = false);
 fast_flag!(FFLuauDebugLevel: u64 = 1);
 fast_flag!(FFLuauOptimization: u64 = 1);
 fast_flag!(FFLuauGlobalTypeInfoLevel: bool = false);
+
+#[derive(Clone, Copy, Component, Debug)]
+pub struct ContainerProvenance(pub Entity);
+
+pub fn create_provenance(
+    containers: Query<(Entity, Has<ContainerProvenance>), Added<LuauContainer>>,
+    mut commands: Commands,
+) {
+    for e in containers
+        .iter()
+        .filter_map(|(e, h)| if h { Some(e) } else { None })
+    {
+        commands.entity(e).insert(ContainerProvenance(e));
+    }
+}
+
+pub fn assign_provenance(
+    missing_provenance: Query<Entity, (With<ObjectHeader>, Without<ContainerProvenance>)>,
+    has_provenance: Query<Entity, With<LuauContainer>>,
+    ancestors: Query<&ChildOf>,
+
+    mut commands: Commands,
+) {
+    for e in missing_provenance.iter() {
+        for ancestor in ancestors.iter_ancestors(e) {
+            if has_provenance.contains(ancestor) {
+                commands.entity(e).insert(ContainerProvenance(e));
+                break;
+            }
+        }
+    }
+}

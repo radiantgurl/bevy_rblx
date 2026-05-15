@@ -1,12 +1,16 @@
 use std::{
-    ops::DerefMut, sync::{
+    ops::DerefMut,
+    sync::{
         Arc, Weak,
         atomic::{AtomicBool, Ordering},
-    }
+    },
 };
 
-use crate::{core::{FAST_FLAGS, TaskScheduler, ThreadIdentity, WorldAccess}, userdata::LuaSend};
 use crate::internal_prelude::*;
+use crate::{
+    core::{FAST_FLAGS, TaskScheduler, ThreadIdentity, WorldAccess},
+    userdata::LuaSend,
+};
 use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_rblx_derive::fast_flag;
 use mlua::prelude::*;
@@ -42,7 +46,6 @@ impl std::fmt::Debug for ContainerEntry {
 #[derive(Default, Debug)]
 pub struct RBXScriptSignal {
     container_tables: Arc<RwLock<HashMap<usize, ContainerEntry>>>,
-
 }
 
 impl Clone for RBXScriptSignal {
@@ -410,15 +413,22 @@ impl RBXScriptSignal {
 // 2 = ANCESTRYDEFERRED
 pub struct LuaSendRBXScriptConnection {
     conn: Option<LuaRegistryKey>,
-    weak_lua: WeakLua
+    weak_lua: WeakLua,
 }
 
 impl RBXScriptConnection {
     pub fn into_sendable(&self, lua: &Lua) -> LuaResult<LuaSendRBXScriptConnection> {
-        Ok(LuaSendRBXScriptConnection { conn: Some(lua.create_registry_value(self.clone())?), weak_lua: lua.weak() })
+        Ok(LuaSendRBXScriptConnection {
+            conn: Some(lua.create_registry_value(self.clone())?),
+            weak_lua: lua.weak(),
+        })
     }
     pub fn disconnect(&self) -> LuaResult<()> {
-        let mut ud: LuaUserDataRefMut<RBXScriptSignalSingle> = self.signal.as_userdata().expect("signal is userdata").borrow_typed_mut()?;
+        let mut ud: LuaUserDataRefMut<RBXScriptSignalSingle> = self
+            .signal
+            .as_userdata()
+            .expect("signal is userdata")
+            .borrow_typed_mut()?;
 
         if self.pd {
             ud.parallel_dispatch.remove(&self.id);
@@ -436,7 +446,8 @@ impl LuaSendRBXScriptConnection {
             return Ok(());
         }
         if let Some(lua) = self.weak_lua.try_upgrade() {
-            lua.registry_value::<RBXScriptConnection>(self.conn.as_ref().unwrap())?.disconnect()
+            lua.registry_value::<RBXScriptConnection>(self.conn.as_ref().unwrap())?
+                .disconnect()
         } else {
             Ok(())
         }
@@ -447,17 +458,22 @@ impl Clone for LuaSendRBXScriptConnection {
     fn clone(&self) -> Self {
         if let Some(c) = self.conn.as_ref() {
             if let Some(lua) = self.weak_lua.try_upgrade() {
-                let new_key = lua.create_registry_value(lua.registry_value::<LuaValue>(c).expect("expected no error while cloning")).expect("expected no error while cloning");
+                let new_key = lua
+                    .create_registry_value(
+                        lua.registry_value::<LuaValue>(c)
+                            .expect("expected no error while cloning"),
+                    )
+                    .expect("expected no error while cloning");
 
                 return Self {
                     conn: Some(new_key),
-                    weak_lua: self.weak_lua.clone()
+                    weak_lua: self.weak_lua.clone(),
                 };
             }
         }
         Self {
             conn: None,
-            weak_lua: self.weak_lua.clone()
+            weak_lua: self.weak_lua.clone(),
         }
     }
 }

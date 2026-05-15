@@ -1,5 +1,7 @@
 use std::{cell::UnsafeCell, hash::Hash, mem::ManuallyDrop};
 
+// todo: optimize this by turning the internal values into atomics
+
 use lazy_static::lazy_static;
 use parking_lot::{RawRwLock, lock_api::RawRwLock as _};
 

@@ -4,7 +4,8 @@ pub(crate) use crate::core::refcounted::RefCountedEntityCommandsExt as _;
 mod sealed {
     use std::any::type_name;
 
-    use mlua::{ffi::lua_mainthread, lua_State, prelude::*};
+    use bevy::ecs::system::Commands;
+use mlua::{ffi::lua_mainthread, lua_State, prelude::*};
 
     pub trait IntoLuaThread {
         fn into_lua_thread(self, lua: &Lua) -> LuaResult<LuaThread>;
@@ -144,8 +145,48 @@ mod sealed {
             lua_ptr
         }
     }
+
+    pub(crate) trait LuaFunctionExt: 'static {
+        fn queue_call<'w, 's>(&self, lua: &Lua, args: impl IntoLuaMulti);
+    }
+
+    impl LuaFunctionExt for LuaFunction {
+        fn queue_call<'w, 's>(&self, lua: &Lua, args: impl IntoLuaMulti) {
+            lua.app_data_ref::<TaskScheduler>().expect("task scheduler is init").defer_high_priority(lua, self.clone(), args);
+        }
+    }
+
+    macro_rules! lua_todo {
+        () => {
+            {
+                return mlua::Result::Err(mlua::Error::runtime(format!("not yet implemented")))
+            }
+        };
+        ($($tt: tt),*) => {
+            {
+                return mlua::Result::Err(mlua::Error::runtime(format!("not yet implemented: {}", format!($($tt),*))))
+            }
+        }
+    }
+    macro_rules! lua_unimplemented {
+        () => {
+            {
+                return mlua::Result::Err(mlua::Error::runtime(format!("not implemented")))
+            }
+        };
+        ($($tt: tt),*) => {
+            {
+                return mlua::Result::Err(mlua::Error::runtime(format!("not implemented: {}", format!($($tt),*))))
+            }
+        }
+    }
+    use crate::core::TaskScheduler;
+
+pub(crate) use {lua_todo, lua_unimplemented};
 }
 
 pub(crate) use sealed::AnyUserDataTypedExt as _;
+pub(crate) use sealed::LuaExt as _;
+pub(crate) use sealed::LuaFunctionExt as _;
 pub use sealed::IntoLuaThread;
-pub(crate) use sealed::LuaExt;
+pub(crate) use sealed::{lua_todo, lua_unimplemented};

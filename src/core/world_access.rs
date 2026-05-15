@@ -16,6 +16,7 @@ enum InternalWorldAccess {
     #[default]
     None,
     Synchronized {
+        #[deprecated(note = "todo: replace with RefCell<World>")]
         world: RefCell<&'static mut World>,
         commands_accessed: Cell<bool>,
     },
@@ -46,7 +47,7 @@ impl LuaSingleton for WorldAccess {
         Ok(())
     }
 }
-
+#[deprecated(note="todo: the way commands are being accessed is very unsafe and should be done in a different way")]
 enum InternalWorldAccessCommands<'a> {
     Synchronized(std::cell::RefMut<'a, &'static mut World>, Commands<'a, 'a>),
     Desynchronized(Box<RefMut<'a, CommandQueue>>, Commands<'a, 'a>),

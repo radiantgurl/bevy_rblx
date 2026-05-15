@@ -410,10 +410,7 @@ impl ObjectVTable {
             )))
         }
     }
-    pub fn is_a(
-        &'static self,
-        class_name: &str
-    ) -> bool {
+    pub fn is_a(&'static self, class_name: &str) -> bool {
         for vtable in self.method_resolution_order.iter() {
             if vtable.class_name == class_name {
                 return true;

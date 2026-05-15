@@ -1,6 +1,6 @@
-use bevy_rblx_derive::register;
 use crate::internal_prelude::*;
 use crate::userdata::ObjectRef;
+use bevy_rblx_derive::register;
 use mlua::prelude::*;
 
 use crate::core::luau::FFLuauForceJit;
@@ -15,22 +15,28 @@ impl LuaSingleton for TypeOfFn {
 
         let old_typeof = lua.globals().raw_get::<LuaFunction>("typeof")?;
 
-        let new_typeof = lua.create_function(move |lua: &Lua, v: LuaValue| -> LuaResult<LuaValue> {
-            let res = old_typeof.call::<LuaString>(v.clone())?;
+        let new_typeof =
+            lua.create_function(move |lua: &Lua, v: LuaValue| -> LuaResult<LuaValue> {
+                let res = old_typeof.call::<LuaString>(v.clone())?;
 
-            if res.to_string_lossy() == "Object" {
-                let obj = ObjectRef::from_lua(v, lua)?;
-                let world_access = WorldAccess::fetch_readonly(lua);
-                let world = world_access.access_read_only();
-                if world.get::<ObjectHeader>(obj.entity()).expect("is object").vtable.is_a("Instance") {
-                    "Instance".into_lua(lua)
+                if res.to_string_lossy() == "Object" {
+                    let obj = ObjectRef::from_lua(v, lua)?;
+                    let world_access = WorldAccess::fetch_readonly(lua);
+                    let world = world_access.access_read_only();
+                    if world
+                        .get::<ObjectHeader>(obj.entity())
+                        .expect("is object")
+                        .vtable
+                        .is_a("Instance")
+                    {
+                        "Instance".into_lua(lua)
+                    } else {
+                        "Object".into_lua(lua)
+                    }
                 } else {
-                    "Object".into_lua(lua)
+                    res.into_lua(lua)
                 }
-            } else {
-                res.into_lua(lua)
-            }
-        })?;
+            })?;
 
         lua.globals().raw_set("typeof", new_typeof)?;
 

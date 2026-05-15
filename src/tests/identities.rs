@@ -1,6 +1,9 @@
 use mlua::Lua;
 
-use crate::{core::{LuauContainer, ThreadIdentity, ThreadIdentityType}, internal_prelude::LuaExt as _};
+use crate::{
+    core::{LuauContainer, ThreadIdentity, ThreadIdentityType},
+    internal_prelude::*,
+};
 
 #[test]
 pub fn test_identities() {
