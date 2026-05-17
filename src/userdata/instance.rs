@@ -1,3 +1,4 @@
+use crate::core::OBJECT_VTABLES;
 use crate::userdata::ObjectRef;
 use crate::{self as bevy_rblx, core::instance::INSTANCE_CONSTRUCTOR};
 use bevy::prelude::*;
@@ -10,9 +11,8 @@ pub fn instance_protected_new(
     lua: &Lua,
     (class_name, parent): (String, Option<ObjectRef>),
 ) -> LuaResult<ObjectRef> {
-    let world = WorldAccess::fetch_readonly(lua);
-
     let e = {
+        let world = WorldAccess::fetch_readonly(lua);
         let mut commands = world.access_commands();
         let mut entity = commands.spawn_empty();
         let res = INSTANCE_CONSTRUCTOR.protected_new(lua, entity.reborrow(), &class_name);
@@ -28,13 +28,20 @@ pub fn instance_protected_new(
             unreachable!()
         }
     };
+    let vtable = *OBJECT_VTABLES.get(class_name.as_str()).unwrap();
+    for vtable in vtable.method_resolution_order.iter().copied() {
+        if let Some(post_init) = vtable.post_init {
+            post_init(lua, e)?;
+        }
+    }
     Ok(ObjectRef::new(lua, e))
 }
 
 pub fn instance_new(lua: &Lua, class_name: String) -> LuaResult<ObjectRef> {
     let e = {
-        let world = WorldAccess::fetch_readonly(lua);
-        let mut commands = world.access_commands();
+        let mut wa = WorldAccess::fetch(lua);
+        wa.assert_synchronized()?;
+        let mut commands = wa.access_commands();
         let mut entity = commands.spawn_empty();
         let res = INSTANCE_CONSTRUCTOR.new(lua, entity.reborrow(), &class_name);
 
@@ -46,6 +53,12 @@ pub fn instance_new(lua: &Lua, class_name: String) -> LuaResult<ObjectRef> {
             unreachable!()
         }
     };
+    let vtable = *OBJECT_VTABLES.get(class_name.as_str()).unwrap();
+    for vtable in vtable.method_resolution_order.iter().copied() {
+        if let Some(post_init) = vtable.post_init {
+            post_init(lua, e)?;
+        }
+    }
     Ok(ObjectRef::new(lua, e))
 }
 

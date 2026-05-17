@@ -40,6 +40,8 @@ pub enum ObjectNewFn {
 
 pub type LuaObjectGetterFn = fn(&Lua, Entity, &'static ObjectVTable) -> LuaResult<LuaValue>;
 pub type LuaObjectSetterFn = fn(&Lua, Entity, &'static ObjectVTable, LuaValue) -> LuaResult<bool>;
+pub type LuaObjectPropertyRevertDefaultFn = fn(&Lua, Entity);
+pub type LuaObjectPostInitFn = fn(&Lua, Entity) -> LuaResult<()>;
 
 #[derive(Debug)]
 pub struct ObjectPropertyInfo {
@@ -48,6 +50,7 @@ pub struct ObjectPropertyInfo {
 
     pub getter: LuaObjectGetterFn,
     pub setter: Option<LuaObjectSetterFn>,
+    pub revert_to_default: Option<LuaObjectPropertyRevertDefaultFn>,
     #[cfg(feature = "deprecated")]
     pub deprecated_alias_of: Option<&'static str>,
     #[cfg(feature = "deprecated")]
@@ -213,6 +216,7 @@ pub struct ObjectVTable {
     pub methods: &'static [ObjectMethodInfo],
 
     pub new: ObjectNewFn,
+    pub post_init: Option<LuaObjectPostInitFn>,
 
     pub method_resolution_order: LazyLock<Vec<&'static ObjectVTable>>,
     pub lazy_full_fields: LazyLock<HashMap<&'static str, ObjectField>>,
@@ -333,6 +337,7 @@ const _: () = {
                 security: SecurityContext::NONE,
                 getter: class_name_getter,
                 setter: None,
+                revert_to_default: None,
             },
             #[cfg(feature = "deprecated")]
             ObjectPropertyInfo {
@@ -340,12 +345,14 @@ const _: () = {
                 security: SecurityContext::NONE,
                 getter: class_name_getter,
                 setter: None,
+                revert_to_default: None,
             },
             ObjectPropertyInfo {
                 property_name: "Changed",
                 security: SecurityContext::NONE,
                 getter: changed_getter,
                 setter: None,
+                revert_to_default: None,
             },
         ],
         methods: &[
@@ -374,6 +381,7 @@ const _: () = {
             },
         ],
         new: ObjectNewFn::None,
+        post_init: None,
         method_resolution_order: LazyLock::new(move || {
             ObjectVTable::generate_method_resolution_order("Object")
         }),

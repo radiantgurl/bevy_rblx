@@ -1,16 +1,19 @@
-use std::{cell::UnsafeCell, hash::Hash, mem::ManuallyDrop};
+use std::{
+    hash::Hash,
+    mem::ManuallyDrop,
+    sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering::Relaxed},
+};
 
-// todo: optimize this by turning the internal values into atomics
-
+use bevy::log::debug;
 use lazy_static::lazy_static;
-use parking_lot::{RawRwLock, lock_api::RawRwLock as _};
+use parking_lot::Mutex;
 
 union FastFlagInternalValue {
-    string: ManuallyDrop<String>,
-    boolean: bool,
-    int: i64,
-    uint: u64,
-    float: f64,
+    string: ManuallyDrop<Mutex<String>>,
+    boolean: ManuallyDrop<AtomicBool>,
+    int: ManuallyDrop<AtomicI64>,
+    uint: ManuallyDrop<AtomicU64>,
+    float: ManuallyDrop<AtomicU64>, // F64
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -58,8 +61,7 @@ impl FastFlagValue {
 }
 
 pub struct FastFlags {
-    values: UnsafeCell<Vec<FastFlagInternalValue>>,
-    values_rwlock: RawRwLock,
+    values: Vec<FastFlagInternalValue>,
     types: Vec<FastFlagType>,
     names: Vec<&'static str>,
 }
@@ -68,7 +70,6 @@ impl Default for FastFlags {
     fn default() -> Self {
         Self {
             values: Default::default(),
-            values_rwlock: RawRwLock::INIT,
             types: Default::default(),
             names: Default::default(),
         }
@@ -101,10 +102,8 @@ trait FastFlagAllowedType: Sized {
     const TYPE: FastFlagType;
 
     fn create(self) -> FastFlagInternalValue;
-    unsafe fn replace_fastflag(self, value: &mut FastFlagInternalValue) {
-        *value = self.create();
-    }
-    unsafe fn fetch(data: &FastFlagInternalValue) -> Self;
+    unsafe fn replace_fastflag(self, value: &FastFlagInternalValue);
+    unsafe fn fetch(value: &FastFlagInternalValue) -> Self;
 }
 
 impl FastFlagAllowedType for String {
@@ -112,71 +111,96 @@ impl FastFlagAllowedType for String {
 
     fn create(self) -> FastFlagInternalValue {
         FastFlagInternalValue {
-            string: ManuallyDrop::new(self),
+            string: ManuallyDrop::new(Mutex::new(self)),
         }
     }
 
-    unsafe fn replace_fastflag(self, value: &mut FastFlagInternalValue) {
-        unsafe { ManuallyDrop::drop(&mut value.string) };
-        *value = FastFlagInternalValue {
-            string: ManuallyDrop::new(self),
-        }
+    unsafe fn replace_fastflag(self, value: &FastFlagInternalValue) {
+        let mut s = unsafe { value.string.lock() };
+        *s = self;
     }
 
-    unsafe fn fetch(data: &FastFlagInternalValue) -> Self {
-        unsafe { (*data.string).clone() }
+    unsafe fn fetch(value: &FastFlagInternalValue) -> Self {
+        unsafe { value.string.lock().clone() }
     }
 }
 impl FastFlagAllowedType for u64 {
     const TYPE: FastFlagType = FastFlagType::Uint;
 
     fn create(self) -> FastFlagInternalValue {
-        FastFlagInternalValue { uint: self }
+        FastFlagInternalValue {
+            uint: ManuallyDrop::new(AtomicU64::new(self)),
+        }
     }
 
-    unsafe fn fetch(data: &FastFlagInternalValue) -> Self {
-        unsafe { data.uint }
+    unsafe fn replace_fastflag(self, value: &FastFlagInternalValue) {
+        unsafe { value.uint.store(self, Relaxed) }
+    }
+
+    unsafe fn fetch(value: &FastFlagInternalValue) -> Self {
+        unsafe { value.uint.load(Relaxed) }
     }
 }
 impl FastFlagAllowedType for i64 {
     const TYPE: FastFlagType = FastFlagType::Int;
 
     fn create(self) -> FastFlagInternalValue {
-        FastFlagInternalValue { int: self }
+        FastFlagInternalValue {
+            int: ManuallyDrop::new(AtomicI64::new(self)),
+        }
     }
 
-    unsafe fn fetch(data: &FastFlagInternalValue) -> Self {
-        unsafe { data.int }
+    unsafe fn fetch(value: &FastFlagInternalValue) -> Self {
+        unsafe { value.int.load(Relaxed) }
+    }
+
+    unsafe fn replace_fastflag(self, value: &FastFlagInternalValue) {
+        unsafe { value.int.store(self, Relaxed) }
     }
 }
 impl FastFlagAllowedType for bool {
     const TYPE: FastFlagType = FastFlagType::Boolean;
 
     fn create(self) -> FastFlagInternalValue {
-        FastFlagInternalValue { boolean: self }
+        FastFlagInternalValue {
+            boolean: ManuallyDrop::new(AtomicBool::new(self)),
+        }
     }
 
-    unsafe fn fetch(data: &FastFlagInternalValue) -> Self {
-        unsafe { data.boolean }
+    unsafe fn fetch(value: &FastFlagInternalValue) -> Self {
+        unsafe { value.boolean.load(Relaxed) }
+    }
+
+    unsafe fn replace_fastflag(self, value: &FastFlagInternalValue) {
+        unsafe { value.boolean.store(self, Relaxed) }
     }
 }
 impl FastFlagAllowedType for f64 {
     const TYPE: FastFlagType = FastFlagType::Float;
 
     fn create(self) -> FastFlagInternalValue {
-        FastFlagInternalValue { float: self }
+        FastFlagInternalValue {
+            float: ManuallyDrop::new(AtomicU64::new(self.to_bits())),
+        }
     }
 
-    unsafe fn fetch(data: &FastFlagInternalValue) -> Self {
-        unsafe { data.float }
+    unsafe fn fetch(value: &FastFlagInternalValue) -> Self {
+        unsafe { Self::from_bits(value.float.load(Relaxed)) }
+    }
+
+    unsafe fn replace_fastflag(self, value: &FastFlagInternalValue) {
+        unsafe { value.float.store(self.to_bits(), Relaxed) }
     }
 }
 
 impl FastFlagKeyInserter {
     pub fn insert_key<T: FastFlagKey>(&mut self) -> &mut Self {
+        unsafe { T::set_internal_id(self.1) }
         self.0.types.push(T::Target::TYPE);
-        self.0.values.get_mut().push(T::default_value().create());
+        self.0.values.push(T::default_value().create());
         self.0.names.push(T::NAME);
+
+        debug!(target: "bevy-rblx::fastflags", "Adding fast flag {} with type {} and internal id {}", T::NAME, T::Target::TYPE, self.1);
         self.1 += 1;
         self
     }
@@ -201,28 +225,17 @@ unsafe impl Sync for FastFlags {}
 
 impl FastFlags {
     pub fn fetch<T: FastFlagKey>(&self) -> T::Target {
-        self.values_rwlock.lock_shared();
-
         let data = unsafe {
-            let ff_value = &(&*self.values.get().cast_const())[T::fetch_internal_id()];
+            let ff_value = &self.values[T::fetch_internal_id()];
             T::Target::fetch(ff_value)
         };
 
-        unsafe {
-            self.values_rwlock.unlock_shared();
-        }
         data
     }
     pub fn store<T: FastFlagKey>(&self, value: T::Target) {
-        self.values_rwlock.lock_exclusive();
-
+        let ff_value = &self.values[T::fetch_internal_id()];
         unsafe {
-            let ff_value = &mut (&mut *self.values.get())[T::fetch_internal_id()];
             value.replace_fastflag(ff_value);
-        };
-
-        unsafe {
-            self.values_rwlock.unlock_exclusive();
         }
     }
 
@@ -240,23 +253,18 @@ impl FastFlags {
             .map(|(i, _)| i);
         if let Some(idx) = i {
             let ff_type = self.types[idx];
-            self.values_rwlock.lock_shared();
             let data = unsafe {
-                let ff_value = &(&*self.values.get().cast_const())[idx];
-
+                let ff_value = &self.values[idx];
                 match ff_type {
-                    FastFlagType::String => {
-                        FastFlagValue::String(ManuallyDrop::into_inner(ff_value.string.clone()))
+                    FastFlagType::String => FastFlagValue::String(ff_value.string.lock().clone()),
+                    FastFlagType::Boolean => FastFlagValue::Boolean(ff_value.boolean.load(Relaxed)),
+                    FastFlagType::Int => FastFlagValue::Int(ff_value.int.load(Relaxed)),
+                    FastFlagType::Uint => FastFlagValue::Uint(ff_value.uint.load(Relaxed)),
+                    FastFlagType::Float => {
+                        FastFlagValue::Float(f64::from_bits(ff_value.float.load(Relaxed)))
                     }
-                    FastFlagType::Boolean => FastFlagValue::Boolean(ff_value.boolean),
-                    FastFlagType::Int => FastFlagValue::Int(ff_value.int),
-                    FastFlagType::Uint => FastFlagValue::Uint(ff_value.uint),
-                    FastFlagType::Float => FastFlagValue::Float(ff_value.float),
                 }
             };
-            unsafe {
-                self.values_rwlock.unlock_shared();
-            }
 
             Some(data)
         } else {
@@ -280,20 +288,15 @@ impl FastFlags {
             );
         }
 
-        self.values_rwlock.lock_exclusive();
         unsafe {
-            let ff_value = &mut (&mut *self.values.get())[idx];
-
-            *ff_value = match value {
-                FastFlagValue::String(s) => FastFlagInternalValue {
-                    string: ManuallyDrop::new(s),
-                },
-                FastFlagValue::Boolean(b) => FastFlagInternalValue { boolean: b },
-                FastFlagValue::Int(i) => FastFlagInternalValue { int: i },
-                FastFlagValue::Uint(u) => FastFlagInternalValue { uint: u },
-                FastFlagValue::Float(f) => FastFlagInternalValue { float: f },
+            let ff_value = &self.values[idx];
+            match value {
+                FastFlagValue::String(s) => s.replace_fastflag(ff_value),
+                FastFlagValue::Boolean(b) => b.replace_fastflag(ff_value),
+                FastFlagValue::Int(i) => i.replace_fastflag(ff_value),
+                FastFlagValue::Uint(u) => u.replace_fastflag(ff_value),
+                FastFlagValue::Float(f) => f.replace_fastflag(ff_value),
             };
-            self.values_rwlock.unlock_exclusive();
         };
     }
 }

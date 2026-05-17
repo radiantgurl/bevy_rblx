@@ -67,6 +67,18 @@ impl TaskScheduler {
         task.defer_threads[pd].push((t.clone(), values.into_lua_multi(lua)?));
         Ok(t)
     }
+    pub fn defer_custom_pd(
+        &self,
+        lua: &Lua,
+        t: impl IntoLuaThread,
+        values: impl IntoLuaMulti,
+        pd: bool,
+    ) -> LuaResult<LuaThread> {
+        let mut task = self.cell.borrow_mut();
+        let t = t.into_lua_thread(lua)?;
+        task.defer_threads[pd as usize].push((t.clone(), values.into_lua_multi(lua)?));
+        Ok(t)
+    }
     pub fn defer_high_priority(
         &self,
         lua: &Lua,
@@ -160,7 +172,7 @@ impl TaskScheduler {
     fn defer_lua(lua: &Lua, mut values: LuaMultiValue) -> LuaResult<LuaThread> {
         let task = lua.app_data_ref::<TaskScheduler>().unwrap();
         let ft = values.pop_front().unwrap_or_default();
-        task.defer(lua, ft, values)
+        task.defer_next_frame(lua, ft, values)
     }
     fn delay_lua(
         lua: &Lua,
@@ -301,37 +313,38 @@ impl TaskScheduler {
             }
 
             repeat &= self.cell.borrow().defer_threads[pd].len() > 0;
-            let mut still_waiting_delay = Vec::new();
-            for (t, i, d, v) in take(&mut self.cell.borrow_mut().delay_threads[pd]) {
-                if t.status() == LuaThreadStatus::Resumable {
-                    if Instant::now().duration_since(i) >= d {
-                        if let Err(e) = t.resume::<()>(v) {
-                            push_lua_error(lua, t, e);
-                        }
-                    } else {
-                        still_waiting_delay.push((t, i, d, v));
-                    }
-                }
-            }
-            repeat &= self.cell.borrow().delay_threads[pd].len() > 0;
-            self.cell.borrow_mut().delay_threads[pd].append(&mut still_waiting_delay);
 
-            let mut still_waiting_delay = Vec::new();
-            for (t, i, d) in take(&mut self.cell.borrow_mut().wait_threads[pd]) {
-                if t.status() == LuaThreadStatus::Resumable {
-                    if Instant::now().duration_since(i) >= d {
-                        if let Err(e) =
-                            t.resume::<()>(Instant::now().duration_since(i).as_secs_f64())
-                        {
-                            push_lua_error(lua, t, e);
+            if FAST_FLAGS.fetch::<FFTaskSchedulerTimeSensitive>() || new_frame {
+                let mut still_waiting_delay = Vec::new();
+                for (t, i, d, v) in take(&mut self.cell.borrow_mut().delay_threads[pd]) {
+                    if t.status() == LuaThreadStatus::Resumable {
+                        if Instant::now().duration_since(i) >= d {
+                            if let Err(e) = t.resume::<()>(v) {
+                                push_lua_error(lua, t, e);
+                            }
+                        } else {
+                            still_waiting_delay.push((t, i, d, v));
                         }
-                    } else {
-                        still_waiting_delay.push((t, i, d));
                     }
                 }
+                self.cell.borrow_mut().delay_threads[pd].append(&mut still_waiting_delay);
+
+                let mut still_waiting_wait = Vec::new();
+                for (t, i, d) in take(&mut self.cell.borrow_mut().wait_threads[pd]) {
+                    if t.status() == LuaThreadStatus::Resumable {
+                        if Instant::now().duration_since(i) >= d {
+                            if let Err(e) =
+                                t.resume::<()>(Instant::now().duration_since(i).as_secs_f64())
+                            {
+                                push_lua_error(lua, t, e);
+                            }
+                        } else {
+                            still_waiting_wait.push((t, i, d));
+                        }
+                    }
+                }
+                self.cell.borrow_mut().wait_threads[pd].append(&mut still_waiting_wait);
             }
-            repeat &= self.cell.borrow().wait_threads[pd].len() > 0;
-            self.cell.borrow_mut().wait_threads[pd].append(&mut still_waiting_delay);
 
             repeat &= !self.early_interrupt.load(Ordering::Relaxed)
         }
@@ -420,3 +433,4 @@ impl LuaSingleton for TaskScheduler {
 }
 
 fast_flag!(FFTaskSchedulerDisableWatchdog: bool = false);
+fast_flag!(FFTaskSchedulerTimeSensitive: bool = false);

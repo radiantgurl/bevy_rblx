@@ -39,7 +39,7 @@ pub(crate) use core::internal_prelude;
 use crate::core::Engine;
 
 fn main() {
-    let mut app = Engine::default();
+    let mut app = Engine::headless();
 
     app.run();
 }

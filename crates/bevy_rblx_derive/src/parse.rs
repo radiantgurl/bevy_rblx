@@ -205,6 +205,7 @@ mod kw {
     custom_keyword!(require_components);
     custom_keyword!(EntityCommands);
     custom_keyword!(custom_new);
+    custom_keyword!(post_init);
 
     #[derive(Clone, Copy)]
     pub(crate) struct End;
@@ -628,6 +629,7 @@ impl ToTokens for SetterLuaArgs {
 }
 pub(crate) type GetterLuaMethod = LuaMethodClosure<GetterLuaArgs, kw::LuaValue>;
 pub(crate) type SetterLuaMethod = LuaMethodClosure<SetterLuaArgs, kw::bool>;
+pub(crate) type PostInitFn = LuaMethodClosure<kw::End, UnitType>;
 
 #[derive(Clone)]
 pub(crate) struct Method<MethodTy: Parse + Clone> {
@@ -845,6 +847,7 @@ impl Parse for FieldList {
 pub(crate) struct ClassArgs {
     pub require_components: Option<Punctuated<Type, Token![,]>>,
     pub custom_constructor: Option<NewFn>,
+    pub post_init: Option<(PostInitFn, CodeBlock)>,
     pub priv_token: Option<Token![priv]>,
     pub abstract_token: Option<Token![abstract]>,
     pub class_name: Ident,
@@ -861,6 +864,7 @@ impl Parse for ClassArgs {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
         let mut require_components = None;
         let mut custom_constructor = None;
+        let mut post_init = None;
         while input.peek(Token![#]) {
             input.parse::<Token![#]>()?;
             let content;
@@ -871,6 +875,10 @@ impl Parse for ClassArgs {
                 parenthesized!(paren_content in content);
                 require_components = Some(Punctuated::parse_terminated(&paren_content)?);
                 content.parse::<kw::End>()?;
+            } else if content.peek(kw::post_init) {
+                content.parse::<kw::post_init>()?;
+                content.parse::<Token![=]>()?;
+                post_init = Some((content.parse::<PostInitFn>()?, content.parse()?));
             } else {
                 content.parse::<kw::custom_new>()?;
                 content.parse::<Token![=]>()?;
@@ -897,6 +905,7 @@ impl Parse for ClassArgs {
             methods: members_content.parse()?,
             require_components,
             custom_constructor,
+            post_init,
         })
     }
 }

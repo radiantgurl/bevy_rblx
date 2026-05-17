@@ -1,6 +1,5 @@
-use crate::userdata::ObjectRef;
+use crate::userdata::{CFrame, ObjectRef, Vector3};
 
-use bevy::ecs::entity::Entity;
 use mlua::{
     ffi::{lua_Integer, lua_Number},
     prelude::*,
@@ -16,12 +15,14 @@ pub enum LuaFreeValue {
     Number(lua_Number),
     Vector(LuaVector),
     String(String),
-    Object(Entity),
+    Object(ObjectRef),
+    CFrame(CFrame),
+    Vector3(Vector3),
     Buffer(Box<[u8]>),
 }
 
 impl FromLua for LuaFreeValue {
-    fn from_lua(value: LuaValue, _lua: &Lua) -> LuaResult<Self> {
+    fn from_lua(value: LuaValue, lua: &Lua) -> LuaResult<Self> {
         match value {
             LuaNil => Ok(Self::Nil),
             LuaValue::Boolean(b) => Ok(LuaFreeValue::Boolean(b)),
@@ -37,7 +38,25 @@ impl FromLua for LuaFreeValue {
             LuaValue::Thread(_) => {
                 Err(LuaError::runtime("cannot convert thread to lua free value"))
             }
-            LuaValue::UserData(any_user_data) => todo!(),
+            LuaValue::UserData(any_user_data) => {
+                if let Ok(o) = any_user_data.borrow::<ObjectRef>() {
+                    Ok(LuaFreeValue::Object(o.clone_lua(lua)))
+                } else if let Ok(o) = any_user_data.borrow::<CFrame>() {
+                    Ok(LuaFreeValue::CFrame(*o))
+                } else if let Ok(o) = any_user_data.borrow::<Vector3>() {
+                    Ok(LuaFreeValue::Vector3(*o))
+                } else {
+                    if let Some(type_name) = any_user_data.type_name()? {
+                        todo!(
+                            "serializing to free value not implemented for userdata type {type_name}"
+                        )
+                    } else {
+                        todo!(
+                            "serializing to free value not implemented for userdata type <unknown>"
+                        )
+                    }
+                }
+            }
             LuaValue::Buffer(buffer) => Ok(LuaFreeValue::Buffer(unsafe {
                 let buf_vec = buffer.to_vec();
                 let mut b = Box::new_uninit_slice(buf_vec.len()).assume_init();
@@ -59,8 +78,10 @@ impl IntoLua for LuaFreeValue {
             LuaFreeValue::Number(n) => Ok(LuaValue::Number(n)),
             LuaFreeValue::Vector(vector) => Ok(LuaValue::Vector(vector)),
             LuaFreeValue::String(s) => s.into_lua(lua),
-            LuaFreeValue::Object(entity) => ObjectRef::new(lua, entity).into_lua(lua),
+            LuaFreeValue::Object(o) => o.change_lua(lua).into_lua(lua),
             LuaFreeValue::Buffer(items) => Ok(LuaValue::Buffer(lua.create_buffer(items)?)),
+            LuaFreeValue::CFrame(cframe) => cframe.into_lua(lua),
+            LuaFreeValue::Vector3(vector3) => vector3.into_lua(lua),
         }
     }
 }
@@ -74,8 +95,10 @@ impl IntoLua for &LuaFreeValue {
             LuaFreeValue::Number(n) => Ok(LuaValue::Number(*n)),
             LuaFreeValue::Vector(vector) => Ok(LuaValue::Vector(*vector)),
             LuaFreeValue::String(s) => s.as_str().into_lua(lua),
-            LuaFreeValue::Object(entity) => ObjectRef::new(lua, *entity).into_lua(lua),
+            LuaFreeValue::Object(o) => o.clone_lua(lua).into_lua(lua),
             LuaFreeValue::Buffer(items) => Ok(LuaValue::Buffer(lua.create_buffer(items)?)),
+            LuaFreeValue::CFrame(cframe) => (*cframe).into_lua(lua),
+            LuaFreeValue::Vector3(vector3) => (*vector3).into_lua(lua),
         }
     }
 }

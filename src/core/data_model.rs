@@ -1,17 +1,28 @@
+use std::{mem::take, sync::Arc};
+
 use crate::{
-    core::{FAST_FLAGS, Instance, WorldAccess, instance::RootInstance},
-    enums::CreatorType,
+    core::{
+        FAST_FLAGS, InstanceMembers, LuauContainer, RblxLogs, ServiceProvider, WorldAccess, instance::RootInstance, world_access::WorldAccessDestructor
+    },
+    enums::{CreatorType, SignalBehavior},
     internal_prelude::*,
     userdata::{FFSignalBehavior, ObjectRef, RBXScriptSignal},
 };
-use bevy::prelude::*;
+use bevy::{ecs::world::CommandQueue, prelude::*};
 use mlua::prelude::*;
+use parking_lot::Mutex;
 
 use super::ServiceProviderMembers;
 use bevy_rblx_derive::{fast_flag, register_class};
 
 register_class! {
-    #[require_components(RootInstance)]
+    #[require_components(RootInstance, LuauContainer)]
+    #[post_init=fn (lua: &Lua, this: Entity) -> LuaResult<()> {
+        let mut wa = WorldAccess::fetch(lua);
+        let world = wa.access_synchronized()?;
+        world.get_mut::<Name>(this).unwrap().set(FAST_FLAGS.fetch::<FFGameName>());
+        Ok(())
+    }]
     priv DataModel(ServiceProvider)
     members {
         #[getter=fn(lua: &Lua, _this: Entity, _vtable: &'static ObjectVTable) -> LuaResult<LuaValue> {
@@ -53,11 +64,11 @@ register_class! {
         #[deprecated_alias="VIPServerOwnerId"]
         virtual private_server_owner_id: u64,
         #[getter=fn(lua: &Lua, this: Entity, _vtable: &'static ObjectVTable) -> LuaResult<LuaValue> {
-            Instance::find_first_child_of_class(lua, (ObjectRef::new(lua, this), "RunService".to_owned()))?.into_lua(lua)
+            ServiceProvider::find_service(lua, (ObjectRef::new(lua, this), "RunService".to_owned()))?.into_lua(lua)
         }]
         virtual run_service: ObjectRef,
         #[getter=fn(lua: &Lua, this: Entity, _vtable: &'static ObjectVTable) -> LuaResult<LuaValue> {
-            Instance::find_first_child_of_class(lua, (ObjectRef::new(lua, this), "Workspace".to_owned()))?.into_lua(lua)
+            ServiceProvider::get_service(lua, (ObjectRef::new(lua, this), "Workspace".to_owned()))?.into_lua(lua)
         }]
         #[deprecated_alias="workspace"]
         virtual workspace: ObjectRef,
@@ -76,7 +87,10 @@ register_class! {
     }
 }
 
-pub fn bind_close_system_runner(mut app_exit: MessageReader<AppExit>, mut c: Commands) {
+pub fn bind_close_system_runner(
+    mut app_exit: MessageReader<AppExit>, 
+    mut c: Commands
+) {
     for _ in app_exit.read() {
         c.queue(|w: &mut World| {
             let closing_signal = w
@@ -93,17 +107,79 @@ pub fn bind_close_system_runner(mut app_exit: MessageReader<AppExit>, mut c: Com
                 .reference();
             {
                 let mut wa = WorldAccess::default();
-                let unsafe_world = w.as_unsafe_world_cell();
                 unsafe {
-                    wa.insert_sync_access(unsafe_world);
+                    wa.insert_sync_access(w);
                 }
-                FAST_FLAGS.store::<FFSignalBehavior>(1);
+                FAST_FLAGS.store::<FFSignalBehavior>(SignalBehavior::Deferred as u64);
 
                 closing_signal.fire_outside_lua(&mut wa, false, ()).unwrap();
                 close.fire_outside_lua(&mut wa, false, ()).unwrap();
-                wa.clear_desync_access();
+                wa.clear_sync_access(w);
+            }
+            cleanup_instances(w);
+            #[cfg(test)]
+            {
+                use crate::core::Engine;
+
+                Engine::assert_no_errors(w.resource::<RblxLogs>());
             }
         })
+    }
+}
+
+pub fn register_game_global(w: &mut World) {
+    let game = w
+        .query_filtered::<Entity, With<RootInstance>>()
+        .single(w)
+        .unwrap();
+    let containers = w
+        .query_filtered::<&LuauContainer, Added<LuauContainer>>()
+        .iter(w)
+        .map(|x| x.lua.clone())
+        .collect::<Vec<_>>();
+    for lua in containers {
+        unsafe {
+            WorldAccess::fetch(&lua).insert_sync_access(w);
+            lua.globals()
+                .raw_set("game", ObjectRef::new(&lua, game))
+                .unwrap();
+        }
+        WorldAccess::fetch(&lua).clear_sync_access(w)
+    }
+}
+
+pub fn cleanup_instances(w: &mut World) {
+    let mut containers_qs = w.query::<&mut LuauContainer>();
+    let containers = containers_qs
+        .iter_mut(w)
+        .map(|mut x| take(&mut *x))
+        .collect::<Vec<_>>();
+    let mut instances_qs = w.query_filtered::<Entity, With<InstanceMembers>>();
+
+    let arc_w = Arc::new(take(w));
+    let arc_queue = Arc::new(Mutex::new(CommandQueue::default()));
+
+    for c in containers {
+        unsafe {
+            WorldAccess::fetch(&c.lua)
+                .insert_desync_custom_access(arc_w.clone(), arc_queue.clone());
+        }
+        *c.lua
+            .app_data_ref::<Arc<Mutex<WorldAccessDestructor>>>()
+            .unwrap()
+            .lock() = WorldAccessDestructor::DestructPhase {
+            commands: arc_queue.clone(),
+        };
+        drop(c);
+    }
+
+    *w = Arc::into_inner(arc_w).unwrap();
+    let mut queue = Arc::into_inner(arc_queue).unwrap();
+    queue.get_mut().apply(w);
+    let entities = instances_qs.iter(w).collect::<Vec<_>>();
+
+    for e in entities {
+        w.despawn(e);
     }
 }
 
@@ -115,3 +191,4 @@ fast_flag!(FFPlaceId: u64 = 0);
 fast_flag!(FFPlaceVersion: u64 = 1);
 fast_flag!(FFPrivateServerId: String = "reserved server".to_owned());
 fast_flag!(FFPrivateServerOwnerId: u64 = 0);
+fast_flag!(FFGameName: String = "bevy-rblx test instance".to_owned());

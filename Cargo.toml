@@ -5,15 +5,17 @@ edition = "2024"
 build = "src/build.rs"
 
 [dependencies]
-bevy = "0.18.1"
-bevy-inspector-egui = "0.36.0"
+bevy = "^0.18"
+bevy-inspector-egui = "^0.36"
 bevy_rblx_derive = { version = "0.1.0", path = "crates/bevy_rblx_derive" }
-clap = "4.6.1"
-inventory = "0.3.22"
-lazy_static = "1.5.0"
-mlua = { version = "0.11.6", features = ["async", "luau", "luau-jit", "mlua_derive", "vendored", "send", "macros"] }
-parking_lot = "0.12.5"
-static_assertions = { version = "1.1.0", features = ["nightly"] }
+clap = "^4.6"
+concat-idents = "^1.1"
+inventory = "^0.3"
+lazy_static = "^1.5"
+mlua = { version = "^0.11", features = ["async", "luau", "luau-jit", "mlua_derive", "vendored", "send", "macros"] }
+parking_lot = "^0.12"
+ptree = "^0.5"
+static_assertions = { version = "^1.1", features = ["nightly"] }
 
 [workspace]
 members = ["crates/bevy_rblx_derive"]

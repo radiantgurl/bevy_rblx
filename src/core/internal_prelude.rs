@@ -4,8 +4,7 @@ pub(crate) use crate::core::refcounted::RefCountedEntityCommandsExt as _;
 mod sealed {
     use std::any::type_name;
 
-    use bevy::ecs::system::Commands;
-use mlua::{ffi::lua_mainthread, lua_State, prelude::*};
+    use mlua::{ffi::lua_mainthread, lua_State, prelude::*};
 
     pub trait IntoLuaThread {
         fn into_lua_thread(self, lua: &Lua) -> LuaResult<LuaThread>;
@@ -147,12 +146,14 @@ use mlua::{ffi::lua_mainthread, lua_State, prelude::*};
     }
 
     pub(crate) trait LuaFunctionExt: 'static {
-        fn queue_call<'w, 's>(&self, lua: &Lua, args: impl IntoLuaMulti);
+        fn queue_call<'w, 's>(&self, lua: &Lua, args: impl IntoLuaMulti) -> LuaResult<LuaThread>;
     }
 
     impl LuaFunctionExt for LuaFunction {
-        fn queue_call<'w, 's>(&self, lua: &Lua, args: impl IntoLuaMulti) {
-            lua.app_data_ref::<TaskScheduler>().expect("task scheduler is init").defer_high_priority(lua, self.clone(), args);
+        fn queue_call<'w, 's>(&self, lua: &Lua, args: impl IntoLuaMulti) -> LuaResult<LuaThread> {
+            lua.app_data_ref::<TaskScheduler>()
+                .expect("task scheduler is init")
+                .defer_high_priority(lua, self.clone(), args)
         }
     }
 
@@ -182,11 +183,11 @@ use mlua::{ffi::lua_mainthread, lua_State, prelude::*};
     }
     use crate::core::TaskScheduler;
 
-pub(crate) use {lua_todo, lua_unimplemented};
+    pub(crate) use {lua_todo, lua_unimplemented};
 }
 
 pub(crate) use sealed::AnyUserDataTypedExt as _;
+pub use sealed::IntoLuaThread;
 pub(crate) use sealed::LuaExt as _;
 pub(crate) use sealed::LuaFunctionExt as _;
-pub use sealed::IntoLuaThread;
 pub(crate) use sealed::{lua_todo, lua_unimplemented};

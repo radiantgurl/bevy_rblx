@@ -1,6 +1,8 @@
+pub(crate) mod callback;
 pub(crate) mod collection_service;
 pub(crate) mod data_model;
 pub(crate) mod engine;
+pub(crate) mod entity_command;
 pub(crate) mod fastflags;
 pub(crate) mod instance;
 pub(crate) mod internal_prelude;
@@ -23,9 +25,11 @@ pub use object::{OBJECT_VTABLES, ObjectHeader, ObjectVTable};
 pub use refcounted::{
     RefCounted, RefCountedEntityCommandsExt, RefCountedGroup, RefCountedPlugin,
     assign_refcounted_groups, commands as refcounted_commands, refcounted_check_dead,
-    refcounted_check_dead_mut,
 };
 
+pub use callback::{
+    LuaCallback, LuaCallbackTable, LuaPrioCallbackTable, LuaPrioCallbackTableCached,
+};
 pub use collection_service::{CollectionService, CollectionServiceMembers};
 pub use data_model::{
     DataModel, DataModelMembers, FFGameCreatorId, FFGameCreatorType, FFGameId, FFJobId, FFPlaceId,

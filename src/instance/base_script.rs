@@ -16,6 +16,10 @@ register_class! {
 register_class! {
     abstract BaseScript (LuaSourceContainer)
     members {
+        #[setter=fn(lua: &Lua, this: Entity, _vtable: &'static ObjectVTable, value: LuaValue) -> LuaResult<bool> {
+            let new_value = bool::from_lua(value, lua)?;
+            Ok(false)
+        }]
         enabled: bool,
         #[getter=fn(lua: &Lua, this: Entity, _vtable: &'static ObjectVTable) -> LuaResult<LuaValue> {
             let world_access = WorldAccess::fetch_readonly(lua);

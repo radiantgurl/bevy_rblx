@@ -1,10 +1,9 @@
-#![feature(if_let_guard)]
-
 use parse::AttrArguments;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{
-    Error, Expr, ExprArray, Ident, ItemEnum, ItemImpl, LitStr, Token, Type, parse::Parse, parse_macro_input, spanned::Spanned
+    Error, Expr, ExprArray, Ident, ItemEnum, ItemImpl, LitStr, Token, Type, parse::Parse,
+    parse_macro_input, spanned::Spanned,
 };
 use utils::camel_case_to_snake_case;
 
@@ -595,9 +594,11 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
             let new_lit_str = LitStr::new(&format!("expected {class_name}"), class_name.span());
             quote_spanned! {class_name.span() =>
                 impl #class_name_members_ident {
+                    #[allow(dead_code)]
                     pub fn fetch_members<'a>(world: &'a ::bevy::prelude::World, this: ::bevy::prelude::Entity) -> &'a Self {
                         world.get::<#class_name_members_ident>(this).expect(#new_lit_str)
                     }
+                    #[allow(dead_code)]
                     pub fn fetch_members_mut<'a>(world: &'a mut ::bevy::prelude::World, this: ::bevy::prelude::Entity) -> ::bevy::prelude::Mut<'a, Self> {
                         world.get_mut::<#class_name_members_ident>(this).expect(#new_lit_str)
                     }
@@ -650,6 +651,7 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
                         property_name: #renamed,
                         security: bevy_rblx::internal::SecurityContext::#security_context,
 
+                        revert_to_default: None,
                         getter: #class_name::#get_name,
                         setter: #setter
                     }
@@ -667,6 +669,7 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
                                 property_name: #i,
                                 security: bevy_rblx::internal::SecurityContext::#security_context,
 
+                                revert_to_default: None,
                                 getter: #class_name::#get_name,
                                 setter: #setter
                             },
@@ -701,7 +704,7 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
             };
             let is_a_check = quote! {
                 {
-                    let world_access = bevy_rblx::internal::WorldAccess::fetch(lua);
+                    let world_access = bevy_rblx::internal::WorldAccess::fetch_readonly(lua);
                     let world = world_access.access_read_only();
                     if !world.get::<bevy_rblx::internal::ObjectHeader>(#self_name.entity()).expect("entity is object").vtable.method_resolution_order.iter().any(|v| v.class_name == stringify!(#class_name)) {
                         return Err(bevy_rblx::internal::LuaError::runtime(concat!("object is not ", stringify!(#class_name))));
@@ -798,6 +801,36 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
         }
     };
 
+    let post_init_fn_define = if let Some((
+        parse::LuaMethodClosure {
+            async_token,
+            lua_arg,
+            self_name,
+            self_ty,
+            lua_result,
+            lt,
+            return_type,
+            gt,
+            ..
+        },
+        code,
+    )) = &args.post_init
+    {
+        quote! {
+            impl #class_name {
+                #async_token fn post_init(#lua_arg, #self_name: #self_ty) -> #lua_result #lt #return_type #gt #code
+            }
+        }
+    } else {
+        quote! {}
+    };
+
+    let post_init = if args.post_init.is_some() {
+        quote! {Some(#class_name::post_init)}
+    } else {
+        quote! {None}
+    };
+
     let new_fn = if let Some(abstract_token) = args.abstract_token.as_ref() {
         quote_spanned! {abstract_token.span() => None}
     } else if let Some(priv_token) = args.priv_token.as_ref() {
@@ -836,6 +869,8 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
         #new_fn_define
 
+        #post_init_fn_define
+
         #lua_send_check
 
         const _: () = {
@@ -847,6 +882,7 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 methods: &[#(#method_infos),*],
 
                 new: bevy_rblx::internal::ObjectNewFn::#new_fn,
+                post_init: #post_init,
 
                 method_resolution_order: ::std::sync::LazyLock::new(move || bevy_rblx::internal::ObjectVTable::generate_method_resolution_order(stringify!(#class_name))),
                 lazy_full_fields: ::std::sync::LazyLock::new(move || bevy_rblx::internal::ObjectVTable::fetch_full_fields(stringify!(#class_name))),

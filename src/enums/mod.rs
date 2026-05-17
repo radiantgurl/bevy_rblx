@@ -19,6 +19,8 @@ bevy_rblx_derive::create_enums!([
     PathfindingUseImprovedSearch,
     PhysicsSteppingMethod,
     PlayerCharacterDestroyBehavior,
+    PredictionMode,
+    PredictionStatus,
     PrimalPhysicsSolver,
     RejectCharacterDeletions,
     RenderingCacheOptimizationMode,
@@ -30,6 +32,7 @@ bevy_rblx_derive::create_enums!([
     SandboxedInstanceMode,
     SecurityCapability,
     SignalBehavior,
+    StepFrequency,
     StreamOutBehavior,
     StreamingIntegrityMode
 ]);

@@ -6,11 +6,11 @@ use std::{
     },
 };
 
-use crate::internal_prelude::*;
 use crate::{
     core::{FAST_FLAGS, TaskScheduler, ThreadIdentity, WorldAccess},
     userdata::LuaSend,
 };
+use crate::{enums::SignalBehavior, internal_prelude::*};
 use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_rblx_derive::fast_flag;
 use mlua::prelude::*;
@@ -201,11 +201,6 @@ impl LuaUserData for RBXScriptSignalSingle {
             },
         );
     }
-
-    fn register(registry: &mut LuaUserDataRegistry<Self>) {
-        Self::add_fields(registry);
-        Self::add_methods(registry);
-    }
 }
 
 impl LuaUserData for RBXScriptConnection {
@@ -271,13 +266,8 @@ impl RBXScriptSignal {
     fn fetch_funcs(
         lua: &Lua,
         registry: &LuaRegistryKey,
+        is_desync: bool,
     ) -> LuaResult<Vec<(LuaFunction, ThreadIdentity)>> {
-        let is_desync = {
-            let task = lua
-                .app_data_ref::<TaskScheduler>()
-                .expect("task scheduler is initialized");
-            task.is_desynchronized()
-        };
         let single = lua.registry_value::<LuaUserDataRef<RBXScriptSignalSingle>>(registry)?;
         let dispatch_ref = if is_desync {
             &single.parallel_dispatch
@@ -308,12 +298,9 @@ impl RBXScriptSignal {
 
                     // NOTE: Lua will give up its app data when its ready to be accessed (ReentrantMutex)
                     {
-                        let mut internal_world_access = lua
-                            .app_data_mut::<WorldAccess>()
-                            .expect("world access is init");
-                        let mut external_world_access = external_lua
-                            .app_data_mut::<WorldAccess>()
-                            .expect("world access is init");
+                        let mut internal_world_access = WorldAccess::fetch(lua);
+                        let mut external_world_access = WorldAccess::fetch(external_lua);
+                        internal_world_access.assert_valid();
                         std::mem::swap(
                             internal_world_access.deref_mut(),
                             external_world_access.deref_mut(),
@@ -326,16 +313,13 @@ impl RBXScriptSignal {
                         ancestry_fire,
                     );
                     {
-                        let mut internal_world_access = lua
-                            .app_data_mut::<WorldAccess>()
-                            .expect("world access is init");
-                        let mut external_world_access = external_lua
-                            .app_data_mut::<WorldAccess>()
-                            .expect("world access is init");
+                        let mut internal_world_access = WorldAccess::fetch(lua);
+                        let mut external_world_access = WorldAccess::fetch(external_lua);
                         std::mem::swap(
                             internal_world_access.deref_mut(),
                             external_world_access.deref_mut(),
                         );
+                        internal_world_access.assert_valid();
                     }
                     return res;
                 }
@@ -349,10 +333,13 @@ impl RBXScriptSignal {
         registry: &LuaRegistryKey,
         ancestry_fire: bool,
     ) -> LuaResult<()> {
-        let funcs = Self::fetch_funcs(lua, registry)?;
-        let signal_behavior = FAST_FLAGS.fetch::<FFSignalBehavior>();
         let task = TaskScheduler::fetch(lua);
-        if signal_behavior == 2 && ancestry_fire || signal_behavior == 1 {
+        let is_desync = task.is_desynchronized();
+        let signal_behavior = FAST_FLAGS.fetch::<FFSignalBehavior>();
+        let funcs = Self::fetch_funcs(lua, registry, is_desync)?;
+        if signal_behavior == SignalBehavior::AncestryDeferred as u64 && ancestry_fire
+            || signal_behavior == SignalBehavior::Deferred as u64
+        {
             for (f, id) in funcs {
                 let thr = task.defer(lua, f, values.clone())?;
                 unsafe { ThreadIdentity::set_thread(lua, &thr, id) };
@@ -363,6 +350,11 @@ impl RBXScriptSignal {
                 unsafe { ThreadIdentity::set_thread(lua, &thr, id) };
                 task.spawn(lua, thr, values.clone())?;
             }
+        }
+        let funcs = Self::fetch_funcs(lua, registry, !is_desync)?;
+        for (f, id) in funcs {
+            let thr = task.defer_custom_pd(lua, f, values.clone(), !is_desync)?;
+            unsafe { ThreadIdentity::set_thread(lua, &thr, id) };
         }
         Ok(())
     }
@@ -378,22 +370,19 @@ impl RBXScriptSignal {
                 container.weak_lua.try_upgrade(),
             ) {
                 interrupt_early.store(true, Ordering::Relaxed);
-
+                internal_world_access.assert_valid();
                 // NOTE: Lua will give up its app data when its ready to be accessed (ReentrantMutex)
                 {
-                    let mut external_world_access = external_lua
-                        .app_data_mut::<WorldAccess>()
-                        .expect("world access is init");
+                    let mut external_world_access = WorldAccess::fetch(external_lua);
                     std::mem::swap(internal_world_access, external_world_access.deref_mut());
                 }
                 let res =
                     Self::fire_internal(external_lua, values, &container.registry, ancestry_fire);
                 {
-                    let mut external_world_access = external_lua
-                        .app_data_mut::<WorldAccess>()
-                        .expect("world access is init");
+                    let mut external_world_access = WorldAccess::fetch(external_lua);
                     std::mem::swap(internal_world_access, external_world_access.deref_mut());
                 }
+                internal_world_access.assert_valid();
                 return res;
             }
         }
@@ -477,4 +466,4 @@ impl Clone for LuaSendRBXScriptConnection {
         }
     }
 }
-fast_flag!(FFSignalBehavior: u64 = 0);
+fast_flag!(FFSignalBehavior: u64 = SignalBehavior::collapse_default(SignalBehavior::Default) as u64);

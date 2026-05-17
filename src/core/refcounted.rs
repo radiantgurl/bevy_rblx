@@ -188,20 +188,6 @@ impl<'a> RefCountedEntityCommandsExt for EntityCommands<'a> {
         self.queue(protect_command)
     }
 }
-
-pub fn refcounted_check_dead_mut(
-    mut q: Query<(Entity, &mut RefCounted), Changed<RefCounted>>,
-    mut commands: Commands,
-) {
-    if FAST_FLAGS.fetch::<FFDisableRefCountedGC>() {
-        return;
-    }
-    for (e, mut r) in q.iter_mut() {
-        if r.should_delete_mut() {
-            commands.entity(e).detach_all_children().despawn();
-        }
-    }
-}
 pub fn refcounted_check_dead(
     mut q: Query<(Entity, &RefCounted), Changed<RefCounted>>,
     mut commands: Commands,

@@ -3,20 +3,15 @@ use crate::{
     internal_prelude::*,
 };
 
-use bevy::{
-    ecs::world::{CommandQueue, unsafe_world_cell::UnsafeWorldCell},
-    platform::collections::HashMap,
-    prelude::*,
-};
+use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_rblx_derive::{fast_flag, register};
 use mlua::{Compiler, prelude::*};
 
-use crate::core::{LuaSingleton, ThreadIdentityType, WorldAccess, singleton::init_singletons};
+use crate::core::{LuaSingleton, ThreadIdentityType, singleton::init_singletons};
 
 #[derive(Component, Debug)]
 pub struct LuauContainer {
     pub lua: Lua,
-    in_scope: u32,
 }
 
 impl Clone for LuauContainer {
@@ -32,45 +27,11 @@ impl Default for LuauContainer {
             LuaOptions::new().catch_rust_panics(false),
         )
         .unwrap();
-        Self { lua, in_scope: 0 }.internal_init()
+        Self { lua }.internal_init()
     }
 }
 
 impl LuauContainer {
-    pub(super) unsafe fn enter_scope_sync(&mut self, world: UnsafeWorldCell) {
-        debug_assert!(self.in_scope == 0);
-        unsafe {
-            self.lua
-                .app_data_mut::<WorldAccess>()
-                .unwrap()
-                .insert_sync_access(world)
-        }
-        self.in_scope = 1;
-    }
-    pub(super) unsafe fn enter_scope_desync(&mut self, world: &World) {
-        debug_assert!(self.in_scope == 0);
-        unsafe {
-            self.lua
-                .app_data_mut::<WorldAccess>()
-                .unwrap()
-                .insert_desync_access(world)
-        }
-        self.in_scope = 2;
-    }
-    pub(super) fn exit_scope(&mut self, queue_ptr: Option<&mut CommandQueue>) {
-        match self.in_scope {
-            0 => panic!("expected to be called while still in scope"),
-            1 => WorldAccess::fetch(&self.lua).clear_access(),
-            2 => {
-                let mut queue = WorldAccess::fetch(&self.lua)
-                    .clear_desync_access()
-                    .expect("still locked in desync");
-                queue_ptr.unwrap().append(&mut queue);
-            }
-            _ => unreachable!(),
-        };
-        self.in_scope = 0;
-    }
     fn internal_init(mut self) -> Self {
         init_singletons(&mut self.lua).unwrap();
 
@@ -167,6 +128,14 @@ impl ThreadIdentity {
             .0
             .remove(&thr_ptr);
     }
+    pub fn get_thread(lua: &Lua, thr: &LuaThread) -> Self {
+        lua.app_data_mut::<ThreadIdentityTable>()
+            .unwrap()
+            .0
+            .get(&(thr.to_pointer() as usize))
+            .copied()
+            .unwrap_or_default()
+    }
 }
 
 fast_flag!(FFLuauForceJit: bool = false);
@@ -190,7 +159,14 @@ pub fn create_provenance(
 }
 
 pub fn assign_provenance(
-    missing_provenance: Query<Entity, (With<ObjectHeader>, Without<ContainerProvenance>)>,
+    missing_provenance: Query<
+        Entity,
+        (
+            With<ObjectHeader>,
+            Without<ContainerProvenance>,
+            With<Children>,
+        ),
+    >,
     has_provenance: Query<Entity, With<LuauContainer>>,
     ancestors: Query<&ChildOf>,
 
