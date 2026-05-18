@@ -85,6 +85,9 @@ pub struct ThreadIdentity {
 }
 
 #[derive(Default, Debug)]
+pub(crate) struct
+
+#[derive(Default, Debug)]
 struct ThreadIdentityTable(HashMap<usize, ThreadIdentity>);
 
 #[register]
