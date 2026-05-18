@@ -216,6 +216,7 @@ create_runservice_trigger!(pre_animation);
 create_runservice_trigger!(pre_render);
 create_runservice_trigger!(pre_simulation);
 create_runservice_trigger!(stepped);
+
 #[derive(AppLabel, Clone, Copy, Hash, Debug, Default, PartialEq, Eq)]
 pub struct IntegratedServer;
 
