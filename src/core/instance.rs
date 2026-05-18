@@ -569,7 +569,7 @@ register_class! {
 
             world.get_mut::<InstanceMembers>(this.entity()).expect("this is an instance")
                 .attribute_changed_signal
-                .entry(key).or_default()
+                .entry(key).or_default().reference()
                 .into_lua(lua)
         }
         fn get_attributes(lua: &Lua, this: ObjectRef) -> LuaResult<LuaValue> {
@@ -756,13 +756,13 @@ register_class! {
             let names = names_qs.query(world);
             let objects = objects_qs.query(world);
 
-            let mut tree_build = ptree::TreeBuilder::new(format!("{} ({})", names.get(this.entity()).unwrap(), objects.get(this.entity()).unwrap().vtable.class_name));
+            let mut tree_build = ptree::TreeBuilder::new(format!("{} ({}) id: {}", names.get(this.entity()).unwrap(), objects.get(this.entity()).unwrap().vtable.class_name, this.entity()));
             let mut stack = Vec::new();
             stack.push(descendants.get(this.entity()).unwrap().len());
             for e in descendants.iter_descendants_depth_first(this.entity()) {
                 *stack.last_mut().unwrap() -= 1;
                 let c = descendants.get(e).unwrap();
-                let name = format!("{} ({})", names.get(e).unwrap(), objects.get(e).unwrap().vtable.class_name);
+                let name = format!("{} ({}) id: {}", names.get(e).unwrap(), objects.get(e).unwrap().vtable.class_name, e);
                 if c.is_empty() {
                     tree_build.add_empty_child(name);
                 } else {

@@ -2,7 +2,7 @@ use std::{mem::take, sync::Arc};
 
 use crate::{
     core::{
-        FAST_FLAGS, InstanceMembers, LuauContainer, RblxLogs, ServiceProvider, WorldAccess, instance::RootInstance, world_access::WorldAccessDestructor
+        FAST_FLAGS, LuauContainer, ServiceProvider, WorldAccess, instance::RootInstance, world_access::WorldAccessDestructor
     },
     enums::{CreatorType, SignalBehavior},
     internal_prelude::*,
@@ -119,7 +119,7 @@ pub fn bind_close_system_runner(
             cleanup_instances(w);
             #[cfg(test)]
             {
-                use crate::core::Engine;
+                use crate::core::{Engine, RblxLogs};
 
                 Engine::assert_no_errors(w.resource::<RblxLogs>());
             }
@@ -152,35 +152,29 @@ pub fn cleanup_instances(w: &mut World) {
     let mut containers_qs = w.query::<&mut LuauContainer>();
     let containers = containers_qs
         .iter_mut(w)
-        .map(|mut x| take(&mut *x))
+        .map(|mut x| take(&mut x.lua))
         .collect::<Vec<_>>();
-    let mut instances_qs = w.query_filtered::<Entity, With<InstanceMembers>>();
-
+    
     let arc_w = Arc::new(take(w));
     let arc_queue = Arc::new(Mutex::new(CommandQueue::default()));
 
-    for c in containers {
+    for lua in containers {
         unsafe {
-            WorldAccess::fetch(&c.lua)
+            WorldAccess::fetch(&lua)
                 .insert_desync_custom_access(arc_w.clone(), arc_queue.clone());
         }
-        *c.lua
+        *lua
             .app_data_ref::<Arc<Mutex<WorldAccessDestructor>>>()
             .unwrap()
             .lock() = WorldAccessDestructor::DestructPhase {
             commands: arc_queue.clone(),
         };
-        drop(c);
+        drop(lua);
     }
 
     *w = Arc::into_inner(arc_w).unwrap();
     let mut queue = Arc::into_inner(arc_queue).unwrap();
     queue.get_mut().apply(w);
-    let entities = instances_qs.iter(w).collect::<Vec<_>>();
-
-    for e in entities {
-        w.despawn(e);
-    }
 }
 
 fast_flag!(FFGameCreatorId: u64 = 0);

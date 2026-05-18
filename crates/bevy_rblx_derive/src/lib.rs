@@ -532,11 +532,20 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
             } else {
                 let ty = &field.ty;
                 let field_name = &field.name;
-                let code_block = quote_spanned! { ty.span() =>
-                    let world_access = bevy_rblx::internal::WorldAccess::fetch_readonly(lua);
-                    let world = world_access.access_read_only();
-                    world.get::<#class_name_members_ident>(this).expect("object has members struct").#field_name.clone().into_lua(lua)
-                };
+                let code_block;
+                if let Type::Path(syn::TypePath { path, ..}) = ty && path.is_ident("RBXScriptSignal") {
+                    code_block = quote_spanned! { ty.span() =>
+                        let world_access = bevy_rblx::internal::WorldAccess::fetch_readonly(lua);
+                        let world = world_access.access_read_only();
+                        world.get::<#class_name_members_ident>(this).expect("object has members struct").#field_name.reference().into_lua(lua)
+                    };
+                } else {
+                    code_block = quote_spanned! { ty.span() =>
+                        let world_access = bevy_rblx::internal::WorldAccess::fetch_readonly(lua);
+                        let world = world_access.access_read_only();
+                        world.get::<#class_name_members_ident>(this).expect("object has members struct").#field_name.clone().into_lua(lua)
+                    };
+                }
                 quote_spanned! { get_name.span() =>
                     pub fn #get_name(lua: &Lua, this: bevy_rblx::internal::Entity, _vtable: &'static bevy_rblx::internal::ObjectVTable) -> LuaResult<LuaValue> {
                         #code_block

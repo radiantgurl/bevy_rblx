@@ -369,8 +369,10 @@ impl Engine {
             app::{Main, PluginGroup as _, RunMode, ScheduleRunnerPlugin},
             ecs::system::{LocalBuilder, ParamBuilder, SystemParamBuilder},
         };
+        use crate::core::{FAST_FLAGS, scheduler::FFTaskSchedulerDisableWatchdog};
 
         let mut app = App::new();
+        FAST_FLAGS.store::<FFTaskSchedulerDisableWatchdog>(true);
 
         app.add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin {
             run_mode: RunMode::Loop { wait: None },

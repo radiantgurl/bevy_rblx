@@ -238,9 +238,7 @@ impl<'a> IntoLua for &'a RBXScriptSignal {
         if let Some(x) = self.container_tables.read().get(&id) {
             lua.registry_value(&x.registry)
         } else {
-            let task = lua
-                .app_data_ref::<TaskScheduler>()
-                .expect("task scheduler is initialized");
+            let task = TaskScheduler::fetch(lua);
             let single = RBXScriptSignalSingle::default();
             let registry_key = lua.create_registry_value(single)?;
             let value = lua.registry_value(&registry_key);

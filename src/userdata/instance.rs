@@ -54,7 +54,7 @@ pub fn instance_new(lua: &Lua, class_name: String) -> LuaResult<ObjectRef> {
         }
     };
     let vtable = *OBJECT_VTABLES.get(class_name.as_str()).unwrap();
-    for vtable in vtable.method_resolution_order.iter().copied() {
+    for vtable in vtable.method_resolution_order.iter().copied().rev() {
         if let Some(post_init) = vtable.post_init {
             post_init(lua, e)?;
         }
