@@ -340,19 +340,19 @@ impl RBXScriptSignal {
         {
             for (f, id) in funcs {
                 let thr = task.defer(lua, f, values.clone())?;
-                unsafe { ThreadIdentity::set_thread(lua, &thr, id) };
+                unsafe { ThreadIdentity::set_thread(lua, thr, id) };
             }
         } else {
             for (f, id) in funcs {
                 let thr = lua.create_thread(f)?;
-                unsafe { ThreadIdentity::set_thread(lua, &thr, id) };
+                unsafe { ThreadIdentity::set_thread(lua, thr.clone(), id) };
                 task.spawn(lua, thr, values.clone())?;
             }
         }
         let funcs = Self::fetch_funcs(lua, registry, !is_desync)?;
         for (f, id) in funcs {
             let thr = task.defer_custom_pd(lua, f, values.clone(), !is_desync)?;
-            unsafe { ThreadIdentity::set_thread(lua, &thr, id) };
+            unsafe { ThreadIdentity::set_thread(lua, thr, id) };
         }
         Ok(())
     }

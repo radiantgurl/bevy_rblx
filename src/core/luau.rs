@@ -3,9 +3,9 @@ use crate::{
     internal_prelude::*,
 };
 
-use bevy::{platform::collections::HashMap, prelude::*};
+use bevy::{platform::collections::{HashMap, HashSet}, prelude::*};
 use bevy_rblx_derive::{fast_flag, register};
-use mlua::{Compiler, prelude::*};
+use mlua::{Compiler, ffi::{lua_pushthread, lua_xmove}, prelude::*};
 
 use crate::core::{LuaSingleton, ThreadIdentityType, singleton::init_singletons};
 
@@ -66,9 +66,13 @@ unsafe extern "C-unwind" fn thread_create_delete_callback(
     unsafe {
         if !parent.is_null() {
             let parent_lua = Lua::get_or_init_from_ptr(parent);
-            ThreadIdentity::set_thread_raw(
+            let t = parent_lua.exec_raw::<LuaThread>((), |l| {
+                lua_pushthread(child);
+                lua_xmove(child, l, 1);
+            }).unwrap();
+            ThreadIdentity::set_thread(
                 parent_lua,
-                child as usize,
+                t,
                 ThreadIdentity::fetch(parent_lua),
             );
         } else {
@@ -85,10 +89,10 @@ pub struct ThreadIdentity {
 }
 
 #[derive(Default, Debug)]
-pub(crate) struct
-
-#[derive(Default, Debug)]
-struct ThreadIdentityTable(HashMap<usize, ThreadIdentity>);
+struct ThreadIdentityTable {
+    identities: HashMap<usize, ThreadIdentity>,
+    scripts: HashMap<Entity, HashMap<usize, LuaThread>>
+}
 
 #[register]
 impl LuaSingleton for ThreadIdentityTable {
@@ -102,42 +106,64 @@ impl ThreadIdentity {
     pub fn fetch(lua: &Lua) -> ThreadIdentity {
         lua.app_data_ref::<ThreadIdentityTable>()
             .unwrap()
-            .0
+            .identities
             .get(&(lua.current_thread().to_pointer() as usize))
             .copied()
             .unwrap_or_default()
     }
+    #[inline]
     pub unsafe fn set(lua: &Lua, id: Self) {
-        lua.app_data_mut::<ThreadIdentityTable>()
-            .unwrap()
-            .0
-            .insert(lua.current_thread().to_pointer() as usize, id);
+        let thr = lua.current_thread();
+        unsafe { Self::set_thread(lua, thr, id) };
     }
-    pub unsafe fn set_thread(lua: &Lua, thr: &LuaThread, id: Self) {
-        lua.app_data_mut::<ThreadIdentityTable>()
-            .unwrap()
-            .0
-            .insert(thr.to_pointer() as usize, id);
-    }
-    pub unsafe fn set_thread_raw(lua: &Lua, thr: usize, id: Self) {
-        lua.app_data_mut::<ThreadIdentityTable>()
-            .unwrap()
-            .0
-            .insert(thr, id);
+    pub unsafe fn set_thread(lua: &Lua, thr: LuaThread, id: Self) {
+        let idx = thr.to_pointer() as usize;
+        let mut table = lua.app_data_mut::<ThreadIdentityTable>()
+            .unwrap();
+        if let Some(old_id) = table.identities.get(&idx).copied() {
+            if let Some(e) = old_id.script {
+                let s = table.scripts.get_mut(&e).unwrap();
+                s.remove(&idx);
+                if s.len() == 0 {
+                    table.scripts.remove(&e);
+                }
+            }
+        }
+        table.identities.insert(idx, id);
+        if let Some(e) = id.script {
+            table.scripts.entry(e).or_default().insert(idx, thr);
+        }
     }
     pub fn erase_thr(lua: &Lua, thr_ptr: usize) {
-        lua.app_data_mut::<ThreadIdentityTable>()
-            .unwrap()
-            .0
-            .remove(&thr_ptr);
+        let mut table = lua.app_data_mut::<ThreadIdentityTable>()
+            .unwrap();
+        if let Some(old_id) = table.identities.get(&thr_ptr).copied() {
+            if let Some(e) = old_id.script {
+                let s = table.scripts.get_mut(&e).unwrap();
+                s.remove(&thr_ptr);
+                if s.len() == 0 {
+                    table.scripts.remove(&e);
+                }
+            }
+        }
     }
     pub fn get_thread(lua: &Lua, thr: &LuaThread) -> Self {
-        lua.app_data_mut::<ThreadIdentityTable>()
+        let idx = thr.to_pointer() as usize;
+        lua.app_data_ref::<ThreadIdentityTable>()
             .unwrap()
-            .0
-            .get(&(thr.to_pointer() as usize))
+            .identities
+            .get(&idx)
             .copied()
             .unwrap_or_default()
+    }
+    pub fn get_threads(lua: &Lua, script: Entity) -> Vec<LuaThread> {
+        let table = lua.app_data_ref::<ThreadIdentityTable>()
+            .unwrap();
+        if let Some(threads) = table.scripts.get(&script) {
+            threads.values().cloned().collect()
+        } else {
+            Vec::new()
+        }
     }
 }
 

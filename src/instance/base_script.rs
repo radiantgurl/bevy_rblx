@@ -1,4 +1,5 @@
 use bevy::ecs::entity::Entity;
+use bevy::platform::collections::HashMap;
 use bevy_rblx_derive::register_class;
 use mlua::prelude::*;
 
@@ -18,7 +19,6 @@ register_class! {
 }
 
 pub struct ModuleScriptTable(HashMap<Entity, LuaValue>);
-pub struct Thread
 
 fn set_enabled(lua: &Lua, this: Entity, new_value: bool) -> LuaResult<bool> {
     let mut wa = WorldAccess::fetch(lua);
@@ -35,6 +35,7 @@ fn set_enabled(lua: &Lua, this: Entity, new_value: bool) -> LuaResult<bool> {
     } else {
 
     }
+    Ok(true)
 }
 
 register_class! {
