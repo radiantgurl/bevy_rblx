@@ -291,8 +291,11 @@ impl TaskScheduler {
             }
         }
 
+        self.cell.borrow_mut().parallel_dispatch = parallel_dispatch;
+
         if new_frame {
-            for (t, v) in take(&mut self.cell.borrow_mut().defer_next_threads[pd]) {
+            let defer_new_frame_threads = take(&mut self.cell.borrow_mut().defer_next_threads[pd]);
+            for (t, v) in defer_new_frame_threads {
                 if t.status() == LuaThreadStatus::Resumable {
                     if let Err(e) = t.resume::<()>(v) {
                         push_lua_error(lua, t, e);
@@ -303,8 +306,8 @@ impl TaskScheduler {
 
         let mut repeat = true;
         while repeat && start.elapsed() < allocated_duration {
-            self.cell.borrow_mut().parallel_dispatch = parallel_dispatch;
-            for (t, v) in take(&mut self.cell.borrow_mut().defer_threads[pd]) {
+            let defer_threads = take(&mut self.cell.borrow_mut().defer_threads[pd]);
+            for (t, v) in defer_threads {
                 if t.status() == LuaThreadStatus::Resumable {
                     if let Err(e) = t.resume::<()>(v) {
                         push_lua_error(lua, t, e);
@@ -316,7 +319,8 @@ impl TaskScheduler {
 
             if FAST_FLAGS.fetch::<FFTaskSchedulerTimeSensitive>() || new_frame {
                 let mut still_waiting_delay = Vec::new();
-                for (t, i, d, v) in take(&mut self.cell.borrow_mut().delay_threads[pd]) {
+                let new_delay_threads = take(&mut self.cell.borrow_mut().delay_threads[pd]);
+                for (t, i, d, v) in new_delay_threads {
                     if t.status() == LuaThreadStatus::Resumable {
                         if Instant::now().duration_since(i) >= d {
                             if let Err(e) = t.resume::<()>(v) {
@@ -330,7 +334,8 @@ impl TaskScheduler {
                 self.cell.borrow_mut().delay_threads[pd].append(&mut still_waiting_delay);
 
                 let mut still_waiting_wait = Vec::new();
-                for (t, i, d) in take(&mut self.cell.borrow_mut().wait_threads[pd]) {
+                let new_waiting_threads = take(&mut self.cell.borrow_mut().wait_threads[pd]);
+                for (t, i, d) in new_waiting_threads {
                     if t.status() == LuaThreadStatus::Resumable {
                         if Instant::now().duration_since(i) >= d {
                             if let Err(e) =
