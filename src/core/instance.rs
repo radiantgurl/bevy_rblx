@@ -215,6 +215,21 @@ register_class! {
         Ok(())
 
     }]
+    #[custom_getter=fn(lua: &Lua, this: Entity, field: &str) -> LuaResult<LuaValue> {
+        let entity;
+        'outer: {
+            let wa = WorldAccess::fetch_readonly(lua);
+            let world = wa.access_read_only();
+            for e in world.get::<Children>(this).unwrap() {
+                if world.get::<Name>(*e).unwrap().as_str() == field {
+                    entity = *e;
+                    break 'outer;
+                }
+            }
+            return Ok(LuaValue::Nil)
+        }
+        ObjectRef::new(lua, entity).into_lua(lua)
+    }]
     #[require_components(Name, Children)]
     abstract Instance(Object)
     members {

@@ -12,6 +12,7 @@ bevy = "^0.18"
 bevy-async-commands = "0.3.1"
 bevy-async-ecs = "0.10.0"
 bevy-inspector-egui = "^0.36"
+bevy_egui = "0.39.1"
 bevy_rblx_derive = { version = "0.1.0", path = "crates/bevy_rblx_derive" }
 clap = { version = "^4.6", features = ["cargo"] }
 concat-idents = "^1.1"

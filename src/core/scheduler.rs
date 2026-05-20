@@ -307,7 +307,9 @@ impl TaskScheduler {
         }
 
         let mut repeat = true;
-        while repeat && start.elapsed() < allocated_duration {
+        let mut atleast_once = true;
+        while (repeat && start.elapsed() < allocated_duration) || atleast_once {
+            atleast_once = false;
             let defer_threads = take(&mut self.cell.borrow_mut().defer_threads[pd]);
             for (t, v) in defer_threads {
                 if t.status() == LuaThreadStatus::Resumable {

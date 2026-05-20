@@ -833,9 +833,37 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
     } else {
         quote! {}
     };
+    let custom_getter_define = if let Some((
+        parse::LuaMethodClosure {
+            async_token,
+            lua_arg,
+            self_name,
+            self_ty,
+            lua_result,
+            lt,
+            return_type,
+            gt,
+            args
+        },
+        code,
+    )) = &args.custom_getter
+    {
+        quote! {
+            impl #class_name {
+                #async_token fn custom_getter(#lua_arg, #self_name: #self_ty #args) -> #lua_result #lt #return_type #gt #code
+            }
+        }
+    } else {
+        quote! {}
+    };
 
     let post_init = if args.post_init.is_some() {
         quote! {Some(#class_name::post_init)}
+    } else {
+        quote! {None}
+    };
+    let custom_getter = if args.custom_getter.is_some() {
+        quote! {Some(#class_name::custom_getter)}
     } else {
         quote! {None}
     };
@@ -880,6 +908,8 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
         #post_init_fn_define
 
+        #custom_getter_define
+
         #lua_send_check
 
         const _: () = {
@@ -892,6 +922,7 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
                 new: bevy_rblx::internal::ObjectNewFn::#new_fn,
                 post_init: #post_init,
+                custom_getter: #custom_getter,
 
                 method_resolution_order: ::std::sync::LazyLock::new(move || bevy_rblx::internal::ObjectVTable::generate_method_resolution_order(stringify!(#class_name))),
                 lazy_full_fields: ::std::sync::LazyLock::new(move || bevy_rblx::internal::ObjectVTable::fetch_full_fields(stringify!(#class_name))),

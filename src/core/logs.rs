@@ -15,9 +15,9 @@ pub struct RblxLogs {
 
 #[derive(Message, Clone)]
 pub struct LoggedMessage {
-    msg_type: MessageType,
-    msg: String,
-    time: f64,
+    pub msg_type: MessageType,
+    pub msg: String,
+    pub time: f64,
 }
 
 pub fn push_lua_error(lua: &Lua, error: LuaError) {

@@ -205,7 +205,9 @@ mod kw {
     custom_keyword!(require_components);
     custom_keyword!(EntityCommands);
     custom_keyword!(custom_new);
+    custom_keyword!(custom_getter);
     custom_keyword!(post_init);
+    custom_keyword!(str);
 
     #[derive(Clone, Copy)]
     pub(crate) struct End;
@@ -529,6 +531,7 @@ pub(crate) struct GetterLuaArgs {
     pub static_lifetime: syn::Lifetime,
     pub ty: kw::ObjectVTable,
 }
+
 impl Parse for GetterLuaArgs {
     fn parse(input: ParseStream) -> Result<Self> {
         let comma = input.parse::<Token![,]>()?;
@@ -567,6 +570,39 @@ impl ToTokens for GetterLuaArgs {
         });
     }
 }
+
+#[derive(Clone)]
+pub(crate) struct CustomGetterLuaArgs {
+    pub comma: syn::token::Comma,
+    pub field_ident: Ident,
+    pub ampersand: syn::token::And,
+    pub str_type: kw::str
+}
+
+impl Parse for CustomGetterLuaArgs {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let comma = input.parse::<Token![,]>()?;
+        let field_ident = input.parse()?;
+        input.parse::<Token![:]>()?;
+        let ampersand = input.parse::<Token![&]>()?;
+        let str_type = input.parse::<kw::str>()?;
+        Ok(Self {
+            comma,
+            field_ident,
+            ampersand,
+            str_type,
+        })
+    }
+}
+impl ToTokens for CustomGetterLuaArgs {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let CustomGetterLuaArgs { comma, field_ident, ampersand, str_type } = self;
+        tokens.extend(quote::quote! {
+            #comma #field_ident: #ampersand #str_type
+        });
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct SetterLuaArgs {
     pub comma: syn::token::Comma,
@@ -847,6 +883,7 @@ impl Parse for FieldList {
 pub(crate) struct ClassArgs {
     pub require_components: Option<Punctuated<Type, Token![,]>>,
     pub custom_constructor: Option<NewFn>,
+    pub custom_getter: Option<(LuaMethodClosure<CustomGetterLuaArgs, kw::LuaValue>, CodeBlock)>,
     pub post_init: Option<(PostInitFn, CodeBlock)>,
     pub priv_token: Option<Token![priv]>,
     pub abstract_token: Option<Token![abstract]>,
@@ -865,6 +902,7 @@ impl Parse for ClassArgs {
         let mut require_components = None;
         let mut custom_constructor = None;
         let mut post_init = None;
+        let mut custom_getter = None;
         while input.peek(Token![#]) {
             input.parse::<Token![#]>()?;
             let content;
@@ -879,6 +917,10 @@ impl Parse for ClassArgs {
                 content.parse::<kw::post_init>()?;
                 content.parse::<Token![=]>()?;
                 post_init = Some((content.parse::<PostInitFn>()?, content.parse()?));
+            } else if content.peek(kw::custom_getter) {
+                content.parse::<kw::custom_getter>()?;
+                content.parse::<Token![=]>()?;
+                custom_getter = Some((content.parse()?, content.parse()?));
             } else {
                 content.parse::<kw::custom_new>()?;
                 content.parse::<Token![=]>()?;
@@ -906,6 +948,7 @@ impl Parse for ClassArgs {
             require_components,
             custom_constructor,
             post_init,
+            custom_getter
         })
     }
 }

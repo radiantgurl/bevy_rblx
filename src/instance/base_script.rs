@@ -63,6 +63,7 @@ fn create_lua_function(
             .unwrap()
     };
     let env = lua.create_table()?;
+    lua.globals().for_each(|k: LuaValue,v: LuaValue| env.raw_set(k,v)).unwrap();
     env.raw_set("game", ObjectRef::new(lua, game_root))?;
     env.raw_set("script", ObjectRef::new(lua, script))?;
     path.insert(0, '@');

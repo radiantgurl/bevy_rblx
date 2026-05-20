@@ -9,7 +9,7 @@ use std::{
 use bevy::{
     DefaultPlugins, MinimalPlugins,
     app::{
-        App, AppLabel, FixedUpdate, Last, PluginGroup as _, PostUpdate, PreUpdate, Startup, Update,
+        App, AppLabel, FixedUpdate, Last, PluginGroup as _, PostStartup, PostUpdate, PreUpdate, Startup, Update
     },
     camera::Camera2d,
     ecs::{
@@ -449,9 +449,9 @@ impl Engine {
                     .action(ArgAction::SetTrue),
             )
             .arg(
-                clap::Arg::new("cli")
-                    .long("cli")
-                    .long_help("Enable the CLI")
+                clap::Arg::new("devconsole")
+                    .long("devconsole")
+                    .long_help("Enables the Developer Console")
                     .action(ArgAction::SetTrue)
             )
             .get_matches();
@@ -511,8 +511,8 @@ impl Engine {
         } else {
             app = Engine::default();
         }
-        if args.get_flag("cli") {
-            app.add_systems(Startup, start_input_handler);
+        if args.get_flag("devconsole") {
+            app.add_systems(PostStartup, start_input_handler);
         }
 
 

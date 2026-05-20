@@ -39,6 +39,7 @@ pub enum ObjectNewFn {
 }
 
 pub type LuaObjectGetterFn = fn(&Lua, Entity, &'static ObjectVTable) -> LuaResult<LuaValue>;
+pub type LuaObjectFieldGetterFn = fn(&Lua, Entity, &str) -> LuaResult<LuaValue>;
 pub type LuaObjectSetterFn = fn(&Lua, Entity, &'static ObjectVTable, LuaValue) -> LuaResult<bool>;
 pub type LuaObjectPropertyRevertDefaultFn = fn(&Lua, Entity);
 pub type LuaObjectPostInitFn = fn(&Lua, Entity) -> LuaResult<()>;
@@ -217,6 +218,7 @@ pub struct ObjectVTable {
 
     pub new: ObjectNewFn,
     pub post_init: Option<LuaObjectPostInitFn>,
+    pub custom_getter: Option<LuaObjectFieldGetterFn>,
 
     pub method_resolution_order: LazyLock<Vec<&'static ObjectVTable>>,
     pub lazy_full_fields: LazyLock<HashMap<&'static str, ObjectField>>,
@@ -382,6 +384,7 @@ const _: () = {
         ],
         new: ObjectNewFn::None,
         post_init: None,
+        custom_getter: None,
         method_resolution_order: LazyLock::new(move || {
             ObjectVTable::generate_method_resolution_order("Object")
         }),
@@ -396,10 +399,15 @@ impl ObjectVTable {
         if let Some(field) = self.lazy_full_fields.get(index.as_str()) {
             field.get(lua, object, self)
         } else {
-            Err(LuaError::runtime(format!(
-                "object {} has no property {index}",
-                self.class_name
-            )))
+            for vtable in self.method_resolution_order.iter().copied() {
+                if let Some(getter) = vtable.custom_getter {
+                    let v = getter(lua, object, index.as_str())?;
+                    if !v.is_nil() {
+                        return Ok(v);
+                    }
+                }
+            }
+            Ok(LuaValue::Nil)
         }
     }
     pub fn set(
