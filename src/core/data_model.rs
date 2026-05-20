@@ -1,8 +1,9 @@
-use std::{mem::take, sync::Arc};
+use std::{mem::take, process::exit, sync::Arc};
 
 use crate::{
     core::{
-        FAST_FLAGS, LuauContainer, ServiceProvider, WorldAccess, instance::RootInstance, world_access::WorldAccessDestructor
+        DisabledObject, FAST_FLAGS, LuauContainer, ServiceProvider, WorldAccess,
+        instance::RootInstance, world_access::WorldAccessDestructor,
     },
     enums::{CreatorType, SignalBehavior},
     internal_prelude::*,
@@ -87,10 +88,7 @@ register_class! {
     }
 }
 
-pub fn bind_close_system_runner(
-    mut app_exit: MessageReader<AppExit>, 
-    mut c: Commands
-) {
+pub fn bind_close_system_runner(mut app_exit: MessageReader<AppExit>, mut c: Commands) {
     for _ in app_exit.read() {
         c.queue(|w: &mut World| {
             let closing_signal = w
@@ -133,7 +131,7 @@ pub fn register_game_global(w: &mut World) {
         .single(w)
         .unwrap();
     let containers = w
-        .query_filtered::<&LuauContainer, Added<LuauContainer>>()
+        .query_filtered::<&LuauContainer, (Added<LuauContainer>, Allow<DisabledObject>)>()
         .iter(w)
         .map(|x| x.lua.clone())
         .collect::<Vec<_>>();
@@ -149,22 +147,20 @@ pub fn register_game_global(w: &mut World) {
 }
 
 pub fn cleanup_instances(w: &mut World) {
-    let mut containers_qs = w.query::<&mut LuauContainer>();
+    let mut containers_qs = w.query_filtered::<&mut LuauContainer, Allow<DisabledObject>>();
     let containers = containers_qs
         .iter_mut(w)
         .map(|mut x| take(&mut x.lua))
         .collect::<Vec<_>>();
-    
+
     let arc_w = Arc::new(take(w));
     let arc_queue = Arc::new(Mutex::new(CommandQueue::default()));
 
     for lua in containers {
         unsafe {
-            WorldAccess::fetch(&lua)
-                .insert_desync_custom_access(arc_w.clone(), arc_queue.clone());
+            WorldAccess::fetch(&lua).insert_desync_custom_access(arc_w.clone(), arc_queue.clone());
         }
-        *lua
-            .app_data_ref::<Arc<Mutex<WorldAccessDestructor>>>()
+        *lua.app_data_ref::<Arc<Mutex<WorldAccessDestructor>>>()
             .unwrap()
             .lock() = WorldAccessDestructor::DestructPhase {
             commands: arc_queue.clone(),
@@ -172,7 +168,9 @@ pub fn cleanup_instances(w: &mut World) {
         drop(lua);
     }
 
-    *w = Arc::into_inner(arc_w).unwrap();
+    *w = Arc::into_inner(arc_w).unwrap_or_else(|| {
+        exit(137) // FAILED TO EXIT
+    });
     let mut queue = Arc::into_inner(arc_queue).unwrap();
     queue.get_mut().apply(w);
 }
@@ -185,4 +183,4 @@ fast_flag!(FFPlaceId: u64 = 0);
 fast_flag!(FFPlaceVersion: u64 = 1);
 fast_flag!(FFPrivateServerId: String = "reserved server".to_owned());
 fast_flag!(FFPrivateServerOwnerId: u64 = 0);
-fast_flag!(FFGameName: String = "bevy-rblx test instance".to_owned());
+fast_flag!(FFGameName: String = "bevy_rblx test instance".to_owned());

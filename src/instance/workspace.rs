@@ -4,8 +4,8 @@ use mlua::prelude::*;
 // use bevy::prelude::*;
 use crate::internal_prelude::*;
 
-use crate::instance::ModelMembers;
 use crate::core::ServiceMembers;
+use crate::instance::ModelMembers;
 
 register_class! {
     abstract WorldRoot(Model)

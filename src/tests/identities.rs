@@ -1,9 +1,6 @@
 use mlua::Lua;
 
-use crate::{
-    core::{LuauContainer, ThreadIdentity, ThreadIdentityType},
-    internal_prelude::*,
-};
+use crate::core::{LuauContainer, ThreadIdentity, ThreadIdentityType};
 
 #[test]
 pub fn test_identities() {
@@ -40,7 +37,7 @@ pub fn test_identities() {
                 .unwrap(),
         )
         .unwrap();
-    ThreadIdentity::erase_thr(&luau.lua, luau.lua.to_pointer() as usize);
+    ThreadIdentity::erase_thr(&luau.lua, luau.lua.current_thread().to_pointer() as usize);
     assert_eq!(
         ThreadIdentity::fetch(&luau.lua).identity,
         ThreadIdentityType::Anon,

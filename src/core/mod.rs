@@ -4,6 +4,7 @@ pub(crate) mod data_model;
 pub(crate) mod engine;
 pub(crate) mod entity_command;
 pub(crate) mod fastflags;
+pub(crate) mod input;
 pub(crate) mod instance;
 pub(crate) mod internal_prelude;
 pub(crate) mod logs;
@@ -21,7 +22,7 @@ pub(crate) mod world_access;
 pub use instance::{INSTANCE_CONSTRUCTOR, Instance, InstanceMembers};
 pub use internal_prelude::IntoLuaThread;
 pub use luau::{LuauContainer, ThreadIdentity};
-pub use object::{OBJECT_VTABLES, ObjectHeader, ObjectVTable};
+pub use object::{DisabledObject, OBJECT_VTABLES, ObjectHeader, ObjectVTable};
 pub use refcounted::{
     RefCounted, RefCountedEntityCommandsExt, RefCountedGroup, RefCountedPlugin,
     assign_refcounted_groups, commands as refcounted_commands, refcounted_check_dead,

@@ -1,11 +1,15 @@
 use crate::{
-    core::{FAST_FLAGS, ObjectHeader},
+    core::{DisabledObject, FAST_FLAGS, ObjectHeader},
     internal_prelude::*,
 };
 
-use bevy::{platform::collections::{HashMap, HashSet}, prelude::*};
+use bevy::{platform::collections::HashMap, prelude::*};
 use bevy_rblx_derive::{fast_flag, register};
-use mlua::{Compiler, ffi::{lua_pushthread, lua_xmove}, prelude::*};
+use mlua::{
+    Compiler,
+    ffi::{lua_pushthread, lua_xmove},
+    prelude::*,
+};
 
 use crate::core::{LuaSingleton, ThreadIdentityType, singleton::init_singletons};
 
@@ -66,15 +70,13 @@ unsafe extern "C-unwind" fn thread_create_delete_callback(
     unsafe {
         if !parent.is_null() {
             let parent_lua = Lua::get_or_init_from_ptr(parent);
-            let t = parent_lua.exec_raw::<LuaThread>((), |l| {
-                lua_pushthread(child);
-                lua_xmove(child, l, 1);
-            }).unwrap();
-            ThreadIdentity::set_thread(
-                parent_lua,
-                t,
-                ThreadIdentity::fetch(parent_lua),
-            );
+            let t = parent_lua
+                .exec_raw::<LuaThread>((), |l| {
+                    lua_pushthread(child);
+                    lua_xmove(child, l, 1);
+                })
+                .unwrap();
+            ThreadIdentity::set_thread(parent_lua, t, ThreadIdentity::fetch(parent_lua));
         } else {
             let lua = Lua::get_or_init_from_ptr(child);
             ThreadIdentity::erase_thr(lua, child as usize);
@@ -91,7 +93,7 @@ pub struct ThreadIdentity {
 #[derive(Default, Debug)]
 struct ThreadIdentityTable {
     identities: HashMap<usize, ThreadIdentity>,
-    scripts: HashMap<Entity, HashMap<usize, LuaThread>>
+    scripts: HashMap<Entity, HashMap<usize, LuaThread>>,
 }
 
 #[register]
@@ -118,8 +120,7 @@ impl ThreadIdentity {
     }
     pub unsafe fn set_thread(lua: &Lua, thr: LuaThread, id: Self) {
         let idx = thr.to_pointer() as usize;
-        let mut table = lua.app_data_mut::<ThreadIdentityTable>()
-            .unwrap();
+        let mut table = lua.app_data_mut::<ThreadIdentityTable>().unwrap();
         if let Some(old_id) = table.identities.get(&idx).copied() {
             if let Some(e) = old_id.script {
                 let s = table.scripts.get_mut(&e).unwrap();
@@ -135,9 +136,8 @@ impl ThreadIdentity {
         }
     }
     pub fn erase_thr(lua: &Lua, thr_ptr: usize) {
-        let mut table = lua.app_data_mut::<ThreadIdentityTable>()
-            .unwrap();
-        if let Some(old_id) = table.identities.get(&thr_ptr).copied() {
+        let mut table = lua.app_data_mut::<ThreadIdentityTable>().unwrap();
+        if let Some(old_id) = table.identities.remove(&thr_ptr) {
             if let Some(e) = old_id.script {
                 let s = table.scripts.get_mut(&e).unwrap();
                 s.remove(&thr_ptr);
@@ -157,8 +157,7 @@ impl ThreadIdentity {
             .unwrap_or_default()
     }
     pub fn get_threads(lua: &Lua, script: Entity) -> Vec<LuaThread> {
-        let table = lua.app_data_ref::<ThreadIdentityTable>()
-            .unwrap();
+        let table = lua.app_data_ref::<ThreadIdentityTable>().unwrap();
         if let Some(threads) = table.scripts.get(&script) {
             threads.values().cloned().collect()
         } else {
@@ -208,5 +207,14 @@ pub fn assign_provenance(
                 break;
             }
         }
+    }
+}
+
+pub fn erase_provenance(
+    e: Query<Entity, (With<ContainerProvenance>, With<DisabledObject>)>,
+    mut c: Commands,
+) {
+    for i in e {
+        c.entity(i).remove::<ContainerProvenance>();
     }
 }

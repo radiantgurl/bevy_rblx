@@ -1,4 +1,7 @@
-use crate::{core::FAST_FLAGS, internal_prelude::*};
+use crate::{
+    core::{DisabledObject, FAST_FLAGS},
+    internal_prelude::*,
+};
 use bevy::{ecs::system::QueryLens, prelude::*};
 use std::{
     iter::once,
@@ -189,7 +192,7 @@ impl<'a> RefCountedEntityCommandsExt for EntityCommands<'a> {
     }
 }
 pub fn refcounted_check_dead(
-    mut q: Query<(Entity, &RefCounted), Changed<RefCounted>>,
+    mut q: Query<(Entity, &RefCounted), (Changed<RefCounted>, Allow<DisabledObject>)>,
     mut commands: Commands,
 ) {
     if FAST_FLAGS.fetch::<FFDisableRefCountedGC>() {
@@ -203,13 +206,13 @@ pub fn refcounted_check_dead(
 }
 // SAFETY: mut RefCounted assures no entity can be deleted during execution of the group system.
 pub fn assign_refcounted_groups(
-    changed_entities: Query<Entity, (Changed<ChildOf>, With<RefCounted>)>,
+    changed_entities: Query<Entity, (Changed<ChildOf>, With<RefCounted>, Allow<DisabledObject>)>,
     mut removed_parents: RemovedComponents<ChildOf>,
 
-    mut refs: Query<&mut RefCounted>,
+    mut refs: Query<&mut RefCounted, Allow<DisabledObject>>,
 
-    mut parent_hierarchy: Query<Ref<ChildOf>, With<RefCounted>>,
-    children_hierarchy: Query<&Children, With<RefCounted>>,
+    mut parent_hierarchy: Query<Ref<ChildOf>, (With<RefCounted>, Allow<DisabledObject>)>,
+    children_hierarchy: Query<&Children, (With<RefCounted>, Allow<DisabledObject>)>,
 ) {
     let changed_entities = changed_entities.iter().collect::<Vec<_>>();
     for e in changed_entities {
@@ -233,7 +236,8 @@ pub fn assign_refcounted_groups(
                     unsafe { refs.get_mut(i).unwrap().set_group(Some(group.clone())) };
                 }
             } else {
-                let mut lens: QueryLens<&ChildOf> = parent_hierarchy.transmute_lens();
+                let mut lens: QueryLens<&ChildOf, Allow<DisabledObject>> =
+                    parent_hierarchy.transmute_lens_filtered();
                 let parent_hierarchy = lens.query();
                 match (
                     refs.get(e)
@@ -313,7 +317,10 @@ pub struct RefCountedPlugin;
 
 impl Plugin for RefCountedPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Last, (assign_refcounted_groups, refcounted_check_dead));
+        app.add_systems(
+            Last,
+            (assign_refcounted_groups, refcounted_check_dead).chain(),
+        );
     }
 }
 

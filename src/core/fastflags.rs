@@ -200,7 +200,7 @@ impl FastFlagKeyInserter {
         self.0.values.push(T::default_value().create());
         self.0.names.push(T::NAME);
 
-        debug!(target: "bevy-rblx::fastflags", "Adding fast flag {} with type {} and internal id {}", T::NAME, T::Target::TYPE, self.1);
+        debug!(target: "bevy_rblx::fastflags", "Adding fast flag {} with type {} and internal id {}", T::NAME, T::Target::TYPE, self.1);
         self.1 += 1;
         self
     }

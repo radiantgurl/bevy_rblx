@@ -328,7 +328,7 @@ impl<const ERASE_ON_CLONE: bool> LuaPrioCallbackTable<ERASE_ON_CLONE> {
             ids.len() > 0
         });
     }
-    pub fn contains(&self, id: usize) -> bool{
+    pub fn contains(&self, id: usize) -> bool {
         self.ids.contains_key(&id)
     }
     pub fn get_expected_next_id(&self) -> usize {

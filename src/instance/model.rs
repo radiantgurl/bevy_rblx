@@ -1,9 +1,9 @@
 use bevy_rblx_derive::register_class;
 
-use mlua::prelude::*;
-use bevy::prelude::*;
 use crate::enums::{ModelLevelOfDetail, ModelStreamingMode};
 use crate::internal_prelude::*;
+use bevy::prelude::*;
+use mlua::prelude::*;
 
 use crate::core::{InstanceMembers, WorldAccess};
 use crate::userdata::{CFrame, ObjectRef};

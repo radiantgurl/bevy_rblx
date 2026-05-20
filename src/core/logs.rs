@@ -1,12 +1,12 @@
-use crate::core::{Instance, LuaSingleton, ThreadIdentity, WorldAccess, ServiceMembers};
+use crate::core::{Instance, LuaSingleton, ServiceMembers, ThreadIdentity, WorldAccess};
 use crate::enums::MessageType;
-use crate::userdata::{ObjectRef, RBXScriptSignal};
 use crate::internal_prelude::*;
+use crate::userdata::{ObjectRef, RBXScriptSignal};
 
 use bevy::prelude::*;
 use bevy_rblx_derive::{register, register_class};
-use mlua::prelude::*;
 use mlua::ffi::lua_clock;
+use mlua::prelude::*;
 
 #[derive(Resource, Default)]
 pub struct RblxLogs {
@@ -20,23 +20,19 @@ pub struct LoggedMessage {
     time: f64,
 }
 
-pub fn push_lua_error(lua: &Lua, thread: LuaThread, error: LuaError) {
-    let path = {
-        let ti = ThreadIdentity::get_thread(lua, &thread);
-        if let Some(e) = ti.script {
-            Instance::get_full_name(lua, (ObjectRef::new(lua, e),)).unwrap()
-        } else {
-            String::from("anonymous")
-        }
+pub fn push_lua_error(lua: &Lua, error: LuaError) {
+    let formatted = match error {
+        LuaError::RuntimeError(m) => m,
+        e => e.to_string(),
     };
-    push_log(lua, MessageType::MessageError, format!("[{path}] {error}"));
+    push_log(lua, MessageType::MessageError, formatted);
 }
 
 pub fn push_log(lua: &Lua, msg_type: MessageType, msg: impl std::fmt::Display) {
     let msg = msg.to_string();
     let world_access = WorldAccess::fetch_readonly(lua);
     let mut commands = world_access.access_commands();
-    let instant = unsafe {lua_clock()};
+    let instant = unsafe { lua_clock() };
     commands.write_message(LoggedMessage {
         msg_type,
         msg: msg.clone(),
@@ -63,32 +59,38 @@ pub fn push_log(lua: &Lua, msg_type: MessageType, msg: impl std::fmt::Display) {
 #[register]
 impl LuaSingleton for RblxLogs {
     fn register_singleton(lua: &Lua) -> LuaResult<()> {
-        lua.globals().raw_set("print", lua.create_function(|lua, mv: LuaMultiValue| -> LuaResult<()> {
-            let mut s = String::new();
-            let mut p = false;
-            for i in mv {
-                if p {
-                    s.push('\t');
+        lua.globals().raw_set(
+            "print",
+            lua.create_function(|lua, mv: LuaMultiValue| -> LuaResult<()> {
+                let mut s = String::new();
+                let mut p = false;
+                for i in mv {
+                    if p {
+                        s.push('\t');
+                    }
+                    p = true;
+                    s.push_str(i.to_string()?.as_str());
                 }
-                p = true;
-                s.push_str(i.to_string()?.as_str());
-            }
-            push_log(lua, MessageType::MessageInfo, s);
-            Ok(())
-        })?)?;
-        lua.globals().raw_set("warn", lua.create_function(|lua, mv: LuaMultiValue| -> LuaResult<()> {
-            let mut s = String::new();
-            let mut p = false;
-            for i in mv {
-                if p {
-                    s.push('\t');
+                push_log(lua, MessageType::MessageInfo, s);
+                Ok(())
+            })?,
+        )?;
+        lua.globals().raw_set(
+            "warn",
+            lua.create_function(|lua, mv: LuaMultiValue| -> LuaResult<()> {
+                let mut s = String::new();
+                let mut p = false;
+                for i in mv {
+                    if p {
+                        s.push('\t');
+                    }
+                    p = true;
+                    s.push_str(i.to_string()?.as_str());
                 }
-                p = true;
-                s.push_str(i.to_string()?.as_str());
-            }
-            push_log(lua, MessageType::MessageWarning, s);
-            Ok(())
-        })?)
+                push_log(lua, MessageType::MessageWarning, s);
+                Ok(())
+            })?,
+        )
     }
 }
 

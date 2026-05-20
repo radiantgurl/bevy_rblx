@@ -3,13 +3,19 @@ name = "bevy_rblx"
 version = "0.1.0"
 edition = "2024"
 build = "src/build.rs"
+authors = ["Radiant"]
+description = "Running Roblox games inside Bevy Game Engine"
+license = "LICENSE"
 
 [dependencies]
 bevy = "^0.18"
+bevy-async-commands = "0.3.1"
+bevy-async-ecs = "0.10.0"
 bevy-inspector-egui = "^0.36"
 bevy_rblx_derive = { version = "0.1.0", path = "crates/bevy_rblx_derive" }
-clap = "^4.6"
+clap = { version = "^4.6", features = ["cargo"] }
 concat-idents = "^1.1"
+dialoguer = { version = "0.12.0", features = ["completion", "history"] }
 inventory = "^0.3"
 lazy_static = "^1.5"
 mlua = { version = "^0.11", features = ["async", "luau", "luau-jit", "mlua_derive", "vendored", "send", "macros"] }

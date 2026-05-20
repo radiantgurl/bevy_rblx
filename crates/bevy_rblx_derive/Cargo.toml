@@ -2,6 +2,9 @@
 name = "bevy_rblx_derive"
 version = "0.1.0"
 edition = "2024"
+authors = ["Radiant"]
+description = "Bevy Rblx derive macros for the class system"
+license = "Apache-2.0"
 
 [lib]
 proc-macro=true

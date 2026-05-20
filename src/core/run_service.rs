@@ -117,9 +117,7 @@ register_class! {
     }
 }
 
-impl RunService {
-    
-}
+impl RunService {}
 
 fast_flag!(FFIsStudio: bool = false);
 fast_flag!(FFIsEdit: bool = false);

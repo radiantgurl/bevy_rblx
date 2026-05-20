@@ -36,24 +36,24 @@ impl ToTokens for CodeBlock {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) enum AttrArgValue {
     Expr(syn::Expr),
     Func(syn::Signature),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct AttrNamedArg {
     pub name: Ident,
     pub _assign_token: Token![=],
     pub value: AttrArgValue,
 }
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) enum AttrArg {
     Named(AttrNamedArg),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct AttrArguments {
     pub args: Punctuated<AttrArg, Token![,]>,
 }
@@ -648,7 +648,7 @@ impl<MethodTy: Parse + Clone> Parse for Method<MethodTy> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct UnitType(Paren);
 impl ToTokens for UnitType {
     fn to_tokens(&self, tokens: &mut TokenStream) {

@@ -50,7 +50,7 @@ impl TaskScheduler {
     ) -> LuaResult<LuaThread> {
         let t = t.into_lua_thread(lua)?;
         if let Err(e) = t.resume::<()>(values) {
-            push_lua_error(lua, t.clone(), e);
+            push_lua_error(lua, e);
         }
         Ok(t)
     }
@@ -275,6 +275,8 @@ impl TaskScheduler {
         allocated_duration: Duration,
         hard_limit_duration: Option<Duration>,
     ) -> bool {
+        let gc_is_enabled = lua.gc_is_running();
+        lua.gc_stop();
         assert!(
             self.watchdog.get().is_none(),
             "expected to not attempt running task scheduler inside itself"
@@ -298,7 +300,7 @@ impl TaskScheduler {
             for (t, v) in defer_new_frame_threads {
                 if t.status() == LuaThreadStatus::Resumable {
                     if let Err(e) = t.resume::<()>(v) {
-                        push_lua_error(lua, t, e);
+                        push_lua_error(lua, e);
                     }
                 }
             }
@@ -310,7 +312,7 @@ impl TaskScheduler {
             for (t, v) in defer_threads {
                 if t.status() == LuaThreadStatus::Resumable {
                     if let Err(e) = t.resume::<()>(v) {
-                        push_lua_error(lua, t, e);
+                        push_lua_error(lua, e);
                     }
                 }
             }
@@ -324,7 +326,7 @@ impl TaskScheduler {
                     if t.status() == LuaThreadStatus::Resumable {
                         if Instant::now().duration_since(i) >= d {
                             if let Err(e) = t.resume::<()>(v) {
-                                push_lua_error(lua, t, e);
+                                push_lua_error(lua, e);
                             }
                         } else {
                             still_waiting_delay.push((t, i, d, v));
@@ -341,7 +343,7 @@ impl TaskScheduler {
                             if let Err(e) =
                                 t.resume::<()>(Instant::now().duration_since(i).as_secs_f64())
                             {
-                                push_lua_error(lua, t, e);
+                                push_lua_error(lua, e);
                             }
                         } else {
                             still_waiting_wait.push((t, i, d));
@@ -356,6 +358,9 @@ impl TaskScheduler {
         unsafe {
             lua.remove_interrupt();
             self.stop_watchdog();
+        }
+        if gc_is_enabled {
+            lua.gc_restart();
         }
         self.early_interrupt.load(Ordering::Relaxed)
     }

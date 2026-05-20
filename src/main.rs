@@ -1,5 +1,6 @@
 #![feature(negative_impls)]
 #![feature(auto_traits)]
+// #![warn(missing_docs)]
 
 pub mod core;
 pub mod enums;
@@ -39,9 +40,7 @@ pub(crate) use core::internal_prelude;
 use crate::core::Engine;
 
 fn main() {
-    let mut app = Engine::headless();
-
-    app.run();
+    Engine::main()
 }
 
 #[cfg(test)]

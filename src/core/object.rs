@@ -427,3 +427,6 @@ impl ObjectVTable {
         false
     }
 }
+
+#[derive(Component, Clone, Copy, Default, Debug)]
+pub struct DisabledObject;

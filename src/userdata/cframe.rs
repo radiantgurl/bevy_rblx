@@ -1,7 +1,7 @@
+use crate::{core::LuaSingleton, enums::RotationOrder, internal_prelude::*, userdata::Vector3};
 use bevy::prelude::*;
 use bevy_rblx_derive::register;
 use mlua::prelude::*;
-use crate::{core::LuaSingleton, enums::RotationOrder, internal_prelude::*, userdata::Vector3};
 
 #[derive(Clone, Copy, FromLua, PartialEq, Debug, Default)]
 #[repr(transparent)]
@@ -20,9 +20,7 @@ impl Into<Transform> for CFrame {
 
 impl LuaUserData for CFrame {
     fn add_fields<F: LuaUserDataFields<Self>>(fields: &mut F) {
-        fields.add_field_method_get("Position", |_lua, p| {
-            Ok(Vector3::from(p.0.translation))
-        });
+        fields.add_field_method_get("Position", |_lua, p| Ok(Vector3::from(p.0.translation)));
         fields.add_field_method_get("Rotation", |_lua, p| {
             Ok(CFrame(Transform {
                 translation: Vec3::ZERO,
@@ -30,24 +28,12 @@ impl LuaUserData for CFrame {
                 scale: Vec3::ONE,
             }))
         });
-        fields.add_field_method_get("X", |_lua, p| {
-            Ok(p.0.translation.x)
-        });
-        fields.add_field_method_get("Y", |_lua, p| {
-            Ok(p.0.translation.y)
-        });
-        fields.add_field_method_get("Z", |_lua, p| {
-            Ok(p.0.translation.z)
-        });
-        fields.add_field_method_get("LookVector", |_lua, p| {
-            Ok(Vector3::from(*p.0.forward()))
-        });
-        fields.add_field_method_get("RightVector", |_lua, p| {
-            Ok(Vector3::from(*p.0.right()))
-        });
-        fields.add_field_method_get("UpVector", |_lua, p| {
-            Ok(Vector3::from(*p.0.up()))
-        });
+        fields.add_field_method_get("X", |_lua, p| Ok(p.0.translation.x));
+        fields.add_field_method_get("Y", |_lua, p| Ok(p.0.translation.y));
+        fields.add_field_method_get("Z", |_lua, p| Ok(p.0.translation.z));
+        fields.add_field_method_get("LookVector", |_lua, p| Ok(Vector3::from(*p.0.forward())));
+        fields.add_field_method_get("RightVector", |_lua, p| Ok(Vector3::from(*p.0.right())));
+        fields.add_field_method_get("UpVector", |_lua, p| Ok(Vector3::from(*p.0.up())));
         fields.add_field_method_get("XVector", |_lua, p| {
             let v = p.0.to_matrix().x_axis;
             Ok(Vector3::from(Vec3 {
@@ -169,9 +155,15 @@ impl LuaUserData for CFrame {
                 mat.matrix3.z_axis.z,
             ))
         });
-        methods.add_method("ToEulerAngles", |_lua, this, (order,): (Option<RotationOrder>,)| {
-            Ok(this.0.rotation.to_euler(order.unwrap_or(RotationOrder::XYZ).into()))
-        });
+        methods.add_method(
+            "ToEulerAngles",
+            |_lua, this, (order,): (Option<RotationOrder>,)| {
+                Ok(this
+                    .0
+                    .rotation
+                    .to_euler(order.unwrap_or(RotationOrder::XYZ).into()))
+            },
+        );
         methods.add_method("ToEulerAnglesXYZ", |_lua, this, ()| {
             Ok(this.0.rotation.to_euler(RotationOrder::XYZ.into()))
         });
@@ -202,7 +194,10 @@ impl LuaUserData for CFrame {
         });
         methods.add_meta_method("__mul", |lua, this, o: LuaAnyUserData| {
             if let Ok(ud) = o.borrow::<CFrame>() {
-                Self(Transform::from_matrix(this.0.to_matrix().mul_mat4(&ud.0.to_matrix()))).into_lua(lua)
+                Self(Transform::from_matrix(
+                    this.0.to_matrix().mul_mat4(&ud.0.to_matrix()),
+                ))
+                .into_lua(lua)
             } else {
                 let ud: LuaUserDataRef<Vector3> = o.borrow_typed()?;
                 let v: Vec3 = (*ud).into();
@@ -210,13 +205,11 @@ impl LuaUserData for CFrame {
                 v.into_lua(lua)
             }
         });
-        
-
     }
 }
 
 impl CFrame {
-    pub fn new(_lua: &Lua, args: LuaMultiValue) -> LuaResult<Self> {
+    pub fn new(lua: &Lua, args: LuaMultiValue) -> LuaResult<Self> {
         match args.len() {
             0 => Ok(Default::default()),
             1 => {
@@ -226,12 +219,38 @@ impl CFrame {
             2 => {
                 let pos: LuaUserDataRef<Vector3> = args[0].borrow_typed()?;
                 let looking_at: LuaUserDataRef<Vector3> = args[1].borrow_typed()?;
-                Ok(Self(Transform::from_translation((*pos).into()).looking_at((*looking_at).into(), Vec3::ZERO)))
-            },
+                Ok(Self(
+                    Transform::from_translation((*pos).into())
+                        .looking_at((*looking_at).into(), Vec3::ZERO),
+                ))
+            }
             3 => {
-                todo!()
-            },
-            _ => todo!()
+                let (x, y, z) = <(f32, f32, f32)>::from_lua_multi(args, lua)?;
+                Ok(Self(Transform::from_translation(Vec3 { x, y, z })))
+            }
+            7 => {
+                let (x, y, z, qx, qy, qz, qw) =
+                    <(f32, f32, f32, f32, f32, f32, f32)>::from_lua_multi(args, lua)?;
+                Ok(Self(
+                    Transform::from_translation(Vec3 { x, y, z })
+                        .with_rotation(Quat::from_xyzw(qx, qy, qz, qw)),
+                ))
+            }
+            12 => {
+                let v = <[f32; 12]>::from_lua_multi(args, lua)?;
+                let mat = Mat4::from_mat3_translation(
+                    Mat3::from_cols_slice(&v[3..]),
+                    Vec3 {
+                        x: v[0],
+                        y: v[1],
+                        z: v[2],
+                    },
+                );
+                Ok(Self(Transform::from_matrix(mat)))
+            }
+            l => Err(LuaError::runtime(format!(
+                "expected 0, 1, 2, 3, 7 or 12 arguments, got {l}"
+            ))),
         }
     }
 }

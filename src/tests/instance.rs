@@ -1,4 +1,7 @@
-use bevy::{app::PostStartup, ecs::{entity::Entity, query::With, world::World}};
+use bevy::{
+    app::PostStartup,
+    ecs::{entity::Entity, query::With, world::World},
+};
 
 use crate::core::{Engine, LuauContainer, instance::RootInstance};
 

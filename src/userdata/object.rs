@@ -1,7 +1,4 @@
-use std::{
-    ops::Deref,
-    sync::Arc,
-};
+use std::{ops::Deref, sync::Arc};
 
 use crate::{
     core::{
@@ -167,9 +164,7 @@ impl LuaUserData for ObjectRef {
         );
         methods.add_meta_method(
             "__eq",
-            move |_, t, (o, ): (LuaUserDataRef<ObjectRef>,)| -> LuaResult<bool> {
-                Ok(t.0 == o.0)
-            }
+            move |_, t, (o,): (LuaUserDataRef<ObjectRef>,)| -> LuaResult<bool> { Ok(t.0 == o.0) },
         )
     }
     fn add_fields<F: LuaUserDataFields<Self>>(fields: &mut F) {

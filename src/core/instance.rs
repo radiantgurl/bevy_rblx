@@ -17,7 +17,7 @@ use mlua::prelude::*;
 
 use crate::core::object::ObjectNewFn;
 use crate::core::{
-    CollectionService, ObjectHeader, ObjectVTableCreationPointer, push_log,
+    CollectionService, DisabledObject, ObjectHeader, ObjectVTableCreationPointer, push_log,
 };
 
 pub struct InstanceConstructor {
@@ -106,7 +106,7 @@ pub fn remove_parent(lua: &Lua, this: Entity, new_parent: Option<Entity>) -> Lua
         let mut wa = WorldAccess::fetch(lua);
         let world = wa.access_synchronized()?;
 
-        let mut ancestors_qs = world.query::<&ChildOf>();
+        let mut ancestors_qs = world.query_filtered::<&ChildOf, Allow<DisabledObject>>();
         let ancestors = ancestors_qs.query(&*world);
         let parent = ancestors.get(this.entity()).ok().map(|x| x.0);
         if parent.is_none() {
@@ -128,7 +128,7 @@ pub fn remove_parent(lua: &Lua, this: Entity, new_parent: Option<Entity>) -> Lua
         let parent = world.get::<ChildOf>(this).unwrap().0;
         world.entity_mut(parent).remove::<ChildOf>();
 
-        let mut descendants_qs = world.query::<&Children>();
+        let mut descendants_qs = world.query_filtered::<&Children, Allow<DisabledObject>>();
         let descendants = descendants_qs.query(world);
 
         for descendant in descendants.iter_descendants(this) {
@@ -154,7 +154,7 @@ pub fn add_parent(lua: &Lua, this: Entity, new_parent: Entity) -> LuaResult<()> 
         let mut wa = WorldAccess::fetch(lua);
         let world = wa.access_synchronized()?;
         world.entity_mut(new_parent).add_child(this);
-        let mut ancestors_qs = world.query::<&ChildOf>();
+        let mut ancestors_qs = world.query_filtered::<&ChildOf, Allow<DisabledObject>>();
         let ancestors = ancestors_qs.query(&*world);
         events.push(
             InstanceMembers::fetch_members(world, this)
@@ -213,7 +213,7 @@ register_class! {
             }
         }
         Ok(())
-        
+
     }]
     #[require_components(Name, Children)]
     abstract Instance(Object)
@@ -319,7 +319,7 @@ register_class! {
                 let mut root_instance_qs = world.query_filtered::<Entity, With<RootInstance>>();
                 let game_instance = root_instance_qs.single(world).expect("single game instance");
 
-                let mut objects_qs = world.query::<&ObjectHeader>();
+                let mut objects_qs = world.query_filtered::<&ObjectHeader, Allow<DisabledObject>>();
                 let children = world.get::<Children>(game_instance).unwrap();
                 children.iter().filter(|e| {
                     let header = objects_qs.get(world, *e).expect("expected object");
@@ -370,8 +370,8 @@ register_class! {
                         .deny::<(ChildOf, Children)>();
                     builder.finish()
                 };
-                let mut descendants_qs = world.query::<&Children>();
-                let mut ancestors_qs = world.query::<&ChildOf>();
+                let mut descendants_qs = world.query_filtered::<&Children, Allow<DisabledObject>>();
+                let mut ancestors_qs = world.query_filtered::<&ChildOf, Allow<DisabledObject>>();
                 let mut mapper = EntityHashMap::<Entity>::default();
                 let parent_and_child = descendants_qs.query(world)
                     .iter_descendants(this.entity())
@@ -391,7 +391,7 @@ register_class! {
                     cloner.clone_entity(world, child, new_child);
                 }
 
-                let all_instances = std::iter::once(new_instance).chain(world.query::<&Children>().query(world).iter_descendants(new_instance)).map(|x| NewInstanceEvent(x)).collect::<Vec<_>>();
+                let all_instances = std::iter::once(new_instance).chain(world.query_filtered::<&Children, Allow<DisabledObject>>().query(world).iter_descendants(new_instance)).map(|x| NewInstanceEvent(x)).collect::<Vec<_>>();
                 world.write_message_batch(all_instances);
                 new_instance
             };
@@ -439,7 +439,7 @@ register_class! {
             {
                 let world_access = WorldAccess::fetch_readonly(lua);
                 let world = world_access.access_read_only();
-                let mut query_state = world.try_query::<&ChildOf>().expect("query state was not initialized :(");
+                let mut query_state = world.try_query_filtered::<&ChildOf, Allow<DisabledObject>>().expect("query state was not initialized :(");
                 let query = query_state.query(&*world);
                 for ancestor in query.iter_ancestors(this.entity()) {
                     if world.get::<Name>(ancestor).expect("expecting instance").as_str() == name {
@@ -455,13 +455,13 @@ register_class! {
             {
                 let world_access = WorldAccess::fetch_readonly(lua);
                 let world = world_access.access_read_only();
-                let mut query_state = world.try_query::<&ChildOf>().expect("query state was not initialized :(");
+                let mut query_state = world.try_query_filtered::<&ChildOf, Allow<DisabledObject>>().expect("query state was not initialized :(");
                 let query = query_state.query(&*world);
                 for ancestor in query.iter_ancestors(this.entity()) {
                     if world.get::<ObjectHeader>(ancestor).expect("expecting object").vtable.class_name == &class_name {
                         e = Some(ancestor);
                         break;
-                        
+
                     }
                 }
             }
@@ -472,7 +472,7 @@ register_class! {
             {
                 let world_access = WorldAccess::fetch_readonly(lua);
                 let world = world_access.access_read_only();
-                let mut query_state = world.try_query::<&ChildOf>().expect("query state was not initialized :(");
+                let mut query_state = world.try_query_filtered::<&ChildOf, Allow<DisabledObject>>().expect("query state was not initialized :(");
                 let query = query_state.query(&*world);
                 for ancestor in query.iter_ancestors(this.entity()) {
                     for i in world.get::<ObjectHeader>(ancestor).expect("expecting object").vtable.method_resolution_order.iter() {
@@ -536,7 +536,7 @@ register_class! {
             {
                 let world_access = WorldAccess::fetch_readonly(lua);
                 let world = world_access.access_read_only();
-                let mut query_state = world.try_query::<&Children>().expect("query state was not initialized :(");
+                let mut query_state = world.try_query_filtered::<&Children, Allow<DisabledObject>>().expect("query state was not initialized :(");
                 let query = query_state.query(&*world);
                 for descendant in query.iter_descendants(this.entity()) {
                     if world.get::<Name>(descendant).expect("expecting instance").as_str() == name {
@@ -604,8 +604,8 @@ register_class! {
             let v = {
                 let wa = WorldAccess::fetch_readonly(lua);
                 let world = wa.access_read_only();
-    
-                let mut children_qs = world.try_query::<&Children>().expect("failed to create children query");
+
+                let mut children_qs = world.try_query_filtered::<&Children, Allow<DisabledObject>>().expect("failed to create children query");
                 let children = children_qs.query(&*world);
                 children.iter_descendants(this.entity()).collect::<Vec<_>>()
             };
@@ -615,7 +615,7 @@ register_class! {
             let wa = WorldAccess::fetch_readonly(lua);
             let world = wa.access_read_only();
 
-            let mut ancestors_qs = world.try_query::<&ChildOf>().expect("failed to create ancestors query");
+            let mut ancestors_qs = world.try_query_filtered::<&ChildOf, Allow<DisabledObject>>().expect("failed to create ancestors query");
             let ancestors = ancestors_qs.query(&*world).iter_ancestors(this.entity()).collect::<Vec<_>>();
 
             match ancestors.len() {
@@ -748,9 +748,9 @@ register_class! {
             let mut wa = WorldAccess::fetch(lua);
             let world = wa.access_synchronized()?;
 
-            let mut names_qs = world.query::<&Name>();
-            let mut descendants_qs = world.query::<&Children>();
-            let mut objects_qs = world.query::<&ObjectHeader>();
+            let mut names_qs = world.query_filtered::<&Name, Allow<DisabledObject>>();
+            let mut descendants_qs = world.query_filtered::<&Children, Allow<DisabledObject>>();
+            let mut objects_qs = world.query_filtered::<&ObjectHeader, Allow<DisabledObject>>();
 
             let descendants = descendants_qs.query(world);
             let names = names_qs.query(world);

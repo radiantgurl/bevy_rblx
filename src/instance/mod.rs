@@ -1,7 +1,7 @@
 mod base_script;
-mod workspace;
-mod model;
 mod folder;
+mod model;
+mod workspace;
 
 pub use base_script::{
     BaseScript, BaseScriptMembers, LuaSourceContainer, LuaSourceContainerMembers,

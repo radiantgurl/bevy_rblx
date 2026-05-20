@@ -226,9 +226,7 @@ impl WorldAccess {
                 let queue = commands.get_mut();
                 (&**read_only_world, Commands::new(queue, read_only_world))
             }
-            InternalWorldAccess::DesynchronizedWithQueue {
-                ..
-            } => todo!(),
+            InternalWorldAccess::DesynchronizedWithQueue { .. } => todo!(),
         }
     }
 
