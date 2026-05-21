@@ -5,7 +5,8 @@ edition = "2024"
 build = "src/build.rs"
 authors = ["Radiant"]
 description = "Running Roblox games inside Bevy Game Engine"
-license = "LICENSE"
+license-file = "LICENSE.txt"
+repository = "https://github.com/radiantgurl/bevy_rblx.git"
 
 [dependencies]
 bevy = "^0.18"
@@ -13,7 +14,7 @@ bevy-async-commands = "0.3.1"
 bevy-async-ecs = "0.10.0"
 bevy-inspector-egui = "^0.36"
 bevy_egui = "0.39.1"
-bevy_rblx_derive = { version = "0.1.0", path = "crates/bevy_rblx_derive" }
+bevy_rblx_derive = { version = "0.1.1", path = "crates/bevy_rblx_derive" }
 clap = { version = "^4.6", features = ["cargo"] }
 concat-idents = "^1.1"
 dialoguer = { version = "0.12.0", features = ["completion", "history"] }
