@@ -176,7 +176,8 @@
   10. You may not use, distribute, redistribute the Work or Derivative Work 
       with intent to commit crimes online, such as but not limited to creating 
       online games with the sole purpose of experiencing adult acts between 2 
-      or more users.
+      or more users, where one of them may have the possibility of not being
+      of legal age.
 
    END OF TERMS AND CONDITIONS
 
