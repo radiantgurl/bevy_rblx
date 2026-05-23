@@ -2,7 +2,7 @@ use std::{mem::take, process::exit, sync::Arc};
 
 use crate::{
     core::{
-        DisabledObject, FAST_FLAGS, LuauContainer, ServiceProvider, WorldAccess,
+        DisabledObject, FAST_FLAGS, InstanceMembers, LuauContainer, ServiceProvider, WorldAccess,
         instance::RootInstance, world_access::WorldAccessDestructor,
     },
     enums::{CreatorType, SignalBehavior},
@@ -22,6 +22,10 @@ register_class! {
         let mut wa = WorldAccess::fetch(lua);
         let world = wa.access_synchronized()?;
         world.get_mut::<Name>(this).unwrap().set(FAST_FLAGS.fetch::<FFGameName>());
+        let mut m = world.get_mut::<InstanceMembers>(this).unwrap();
+        m.cloning_protected = true;
+        m.destroy_protected = true;
+        m.parent_protected = true;
         Ok(())
     }]
     priv DataModel(ServiceProvider)
@@ -72,16 +76,14 @@ register_class! {
             ServiceProvider::get_service(lua, (ObjectRef::new(lua, this), "Workspace".to_owned()))?.into_lua(lua)
         }]
         #[deprecated_alias="workspace"]
-        virtual workspace: ObjectRef,
-
-        priv closing_signal: RBXScriptSignal
+        virtual workspace: ObjectRef
     }
     methods {
         fn bind_to_close(lua: &Lua, this: ObjectRef, f: LuaFunction) -> LuaResult<()> {
             let world_access = WorldAccess::fetch_readonly(lua);
             let world = world_access.access_read_only();
 
-            let signal = &world.get::<DataModelMembers>(this.entity()).expect("this is a data model").closing_signal;
+            let signal = &world.get::<ServiceProviderMembers>(this.entity()).expect("this is a data model").close;
             signal.connect(lua, f)?;
             Ok(())
         }
@@ -91,12 +93,7 @@ register_class! {
 pub fn bind_close_system_runner(mut app_exit: MessageReader<AppExit>, mut c: Commands) {
     for _ in app_exit.read() {
         c.queue(|w: &mut World| {
-            let closing_signal = w
-                .query::<&DataModelMembers>()
-                .single(w)
-                .expect("root instance exists while exiting app")
-                .closing_signal
-                .reference();
+            println!("Received app exit");
             let close = w
                 .query::<&ServiceProviderMembers>()
                 .single(w)
@@ -108,9 +105,8 @@ pub fn bind_close_system_runner(mut app_exit: MessageReader<AppExit>, mut c: Com
                 unsafe {
                     wa.insert_sync_access(w);
                 }
-                FAST_FLAGS.store::<FFSignalBehavior>(SignalBehavior::Deferred as u64);
+                FAST_FLAGS.store::<FFSignalBehavior>(SignalBehavior::Immediate as u64);
 
-                closing_signal.fire_outside_lua(&mut wa, false, ()).unwrap();
                 close.fire_outside_lua(&mut wa, false, ()).unwrap();
                 wa.clear_sync_access(w);
             }

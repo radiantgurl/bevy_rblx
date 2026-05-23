@@ -71,7 +71,7 @@ impl LuaSingleton for RblxLogs {
                     p = true;
                     s.push_str(i.to_string()?.as_str());
                 }
-                push_log(lua, MessageType::MessageInfo, s);
+                push_log(lua, MessageType::MessageOutput, s);
                 Ok(())
             })?,
         )?;

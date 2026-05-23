@@ -332,11 +332,11 @@ impl RBXScriptSignal {
         ancestry_fire: bool,
     ) -> LuaResult<()> {
         let task = TaskScheduler::fetch(lua);
-        let is_desync = task.is_desynchronized();
-        let signal_behavior = FAST_FLAGS.fetch::<FFSignalBehavior>();
+        let is_desync = WorldAccess::fetch_readonly(lua).is_desynchronized();
+        let signal_behavior: SignalBehavior = FAST_FLAGS.fetch::<FFSignalBehavior>().into();
         let funcs = Self::fetch_funcs(lua, registry, is_desync)?;
-        if signal_behavior == SignalBehavior::AncestryDeferred as u64 && ancestry_fire
-            || signal_behavior == SignalBehavior::Deferred as u64
+        if signal_behavior == SignalBehavior::AncestryDeferred && ancestry_fire
+            || signal_behavior == SignalBehavior::Deferred
         {
             for (f, id) in funcs {
                 let thr = task.defer(lua, f, values.clone())?;

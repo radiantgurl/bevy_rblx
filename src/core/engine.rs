@@ -9,12 +9,13 @@ use std::{
 use bevy::{
     DefaultPlugins, MinimalPlugins,
     app::{
-        App, AppLabel, FixedUpdate, Last, PluginGroup as _, PostStartup, PostUpdate, PreUpdate, Startup, Update
+        App, AppLabel, FixedUpdate, Last, PluginGroup as _, PostStartup, PostUpdate, PreUpdate,
+        Startup, Update,
     },
     camera::Camera2d,
     ecs::{
         error::BevyError,
-        schedule::IntoScheduleConfigs,
+        schedule::{IntoScheduleConfigs, Schedule},
         system::Local,
         world::{CommandQueue, World},
     },
@@ -24,12 +25,22 @@ use bevy::{
 };
 #[cfg(test)]
 use bevy::{app::AppExit, ecs::message::MessageWriter};
+use bevy_egui::EguiPrimaryContextPass;
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 use clap::{ArgAction, value_parser};
 
 use crate::{
     core::{
-        FAST_FLAGS, FastFlagType, LoggedMessage, LuauContainer, RblxLogs, RefCountedEntityCommandsExt as _, RefCountedPlugin, TaskScheduler, WorldAccess, bind_close_system_runner, data_model::register_game_global, fastflags::FastFlagValue, input::start_input_handler, instance::NewInstanceEvent, luau::{assign_provenance, create_provenance, erase_provenance}, object::DisabledObject, run_service::RunServiceMembers
+        FAST_FLAGS, FastFlagType, LoggedMessage, LuauContainer, RblxLogs,
+        RefCountedEntityCommandsExt as _, RefCountedPlugin, TaskScheduler, WorldAccess,
+        bind_close_system_runner,
+        data_model::register_game_global,
+        fastflags::FastFlagValue,
+        input::start_input_handler,
+        instance::NewInstanceEvent,
+        luau::{assign_provenance, create_provenance, erase_provenance},
+        object::DisabledObject,
+        run_service::RunServiceMembers,
     },
     userdata::{RBXScriptSignal, instance_new},
 };
@@ -313,10 +324,6 @@ impl Engine {
                 .chain(),
         );
         app.add_systems(Last, (bind_close_system_runner, erase_provenance));
-
-        // if cfg!(debug_assertions) {
-        //     app.add_plugins(LogDiagnosticsPlugin::default());
-        // }
     }
 
     pub fn headless() -> App {
@@ -350,6 +357,10 @@ impl Engine {
         app.add_plugins(EguiPlugin::default());
         if cfg!(debug_assertions) {
             app.add_plugins(WorldInspectorPlugin::default());
+            app.world_mut().spawn(Camera2d);
+        } else {
+            app.world_mut()
+                .add_schedule(Schedule::new(EguiPrimaryContextPass));
             app.world_mut().spawn(Camera2d);
         }
 
@@ -452,7 +463,7 @@ impl Engine {
                 clap::Arg::new("devconsole")
                     .long("devconsole")
                     .long_help("Enables the Developer Console")
-                    .action(ArgAction::SetTrue)
+                    .action(ArgAction::SetTrue),
             )
             .get_matches();
         let mut app;
@@ -514,7 +525,6 @@ impl Engine {
         if args.get_flag("devconsole") {
             app.add_systems(PostStartup, start_input_handler);
         }
-
 
         if args.get_flag("dryrun") {
             println!("dry run, exiting the app");

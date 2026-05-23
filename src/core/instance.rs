@@ -291,6 +291,8 @@ register_class! {
                 }
                 let members = InstanceMembers::fetch_members(&*world, this);
                 if members.parent_protected || members.destroyed {
+                    drop(world);
+                    drop(wa);
                     push_log(lua, MessageType::MessageWarning, format!("Failed to change instance Parent property, the property is locked."));
                     return Ok(false); // no update
                 }
@@ -419,10 +421,14 @@ register_class! {
                 let world = world_access.access_read_only();
                 let members = world.get::<InstanceMembers>(this.entity()).expect("is instance");
                 if members.destroy_protected {
+                    drop(world);
+                    drop(world_access);
                     push_log(lua, MessageType::MessageWarning, "object is not destroyable");
                     return Ok(());
                 }
                 if members.destroyed {
+                    drop(world);
+                    drop(world_access);
                     push_log(lua, MessageType::MessageWarning, "object already destroyed");
                     return Ok(())
                 }

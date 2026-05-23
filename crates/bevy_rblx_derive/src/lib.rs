@@ -843,7 +843,7 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
             lt,
             return_type,
             gt,
-            args
+            args,
         },
         code,
     )) = &args.custom_getter

@@ -1,6 +1,6 @@
 [package]
 name = "bevy_rblx"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 build = "src/build.rs"
 authors = ["Radiant"]
@@ -10,20 +10,20 @@ repository = "https://github.com/radiantgurl/bevy_rblx.git"
 
 [dependencies]
 bevy = "^0.18"
-bevy-async-commands = "0.3.1"
-bevy-async-ecs = "0.10.0"
+bevy-async-commands = "^0.3"
+bevy-async-ecs = "^0.10"
 bevy-inspector-egui = "^0.36"
-bevy_egui = "0.39.1"
+bevy_egui = "^0.39"
 bevy_rblx_derive = { version = "0.1.1", path = "crates/bevy_rblx_derive" }
+chrono = "0.4.44"
 clap = { version = "^4.6", features = ["cargo"] }
 concat-idents = "^1.1"
-dialoguer = { version = "0.12.0", features = ["completion", "history"] }
 inventory = "^0.3"
 lazy_static = "^1.5"
 mlua = { version = "^0.11", features = ["async", "luau", "luau-jit", "mlua_derive", "vendored", "send", "macros"] }
 parking_lot = "^0.12"
 ptree = "^0.5"
-rbx_binary = "2.0.1"
+rbx_binary = "^2.0"
 static_assertions = { version = "^1.1", features = ["nightly"] }
 
 [workspace]
@@ -32,3 +32,16 @@ members = ["crates/bevy_rblx_derive"]
 [features]
 deprecated = []
 multiplayer = []
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"
+debug = 1
+split-debuginfo = "packed"
+
+[profile.test-release]
+inherits = "release"
+lto=false
+debug = 2
+split-debuginfo = "off"

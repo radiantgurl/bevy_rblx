@@ -161,9 +161,6 @@ impl TaskScheduler {
             _ => Ok(()),
         }
     }
-    pub fn is_desynchronized(&self) -> bool {
-        self.cell.borrow().parallel_dispatch
-    }
     fn spawn_lua(lua: &Lua, mut values: LuaMultiValue) -> LuaResult<LuaThread> {
         let task = lua.app_data_ref::<TaskScheduler>().unwrap();
         let ft = values.pop_front().unwrap_or_default();

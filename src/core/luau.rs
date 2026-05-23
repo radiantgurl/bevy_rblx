@@ -46,6 +46,7 @@ impl LuauContainer {
             .set_optimization_level(FAST_FLAGS.fetch::<FFLuauOptimization>() as u8)
             .set_type_info_level(FAST_FLAGS.fetch::<FFLuauGlobalTypeInfoLevel>() as u8);
         self.lua.set_compiler(compiler);
+        self.lua.gc_stop();
 
         unsafe {
             self.lua

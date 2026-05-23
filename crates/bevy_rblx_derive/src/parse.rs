@@ -576,7 +576,7 @@ pub(crate) struct CustomGetterLuaArgs {
     pub comma: syn::token::Comma,
     pub field_ident: Ident,
     pub ampersand: syn::token::And,
-    pub str_type: kw::str
+    pub str_type: kw::str,
 }
 
 impl Parse for CustomGetterLuaArgs {
@@ -596,7 +596,12 @@ impl Parse for CustomGetterLuaArgs {
 }
 impl ToTokens for CustomGetterLuaArgs {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let CustomGetterLuaArgs { comma, field_ident, ampersand, str_type } = self;
+        let CustomGetterLuaArgs {
+            comma,
+            field_ident,
+            ampersand,
+            str_type,
+        } = self;
         tokens.extend(quote::quote! {
             #comma #field_ident: #ampersand #str_type
         });
@@ -883,7 +888,10 @@ impl Parse for FieldList {
 pub(crate) struct ClassArgs {
     pub require_components: Option<Punctuated<Type, Token![,]>>,
     pub custom_constructor: Option<NewFn>,
-    pub custom_getter: Option<(LuaMethodClosure<CustomGetterLuaArgs, kw::LuaValue>, CodeBlock)>,
+    pub custom_getter: Option<(
+        LuaMethodClosure<CustomGetterLuaArgs, kw::LuaValue>,
+        CodeBlock,
+    )>,
     pub post_init: Option<(PostInitFn, CodeBlock)>,
     pub priv_token: Option<Token![priv]>,
     pub abstract_token: Option<Token![abstract]>,
@@ -948,7 +956,7 @@ impl Parse for ClassArgs {
             require_components,
             custom_constructor,
             post_init,
-            custom_getter
+            custom_getter,
         })
     }
 }
