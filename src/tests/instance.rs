@@ -81,8 +81,6 @@ pub fn bind_to_close() {
         lua.load(
             r#"
         task.defer(function()
-            print("Attaching to game.Close")
-            game:BindToClose(function() print("hi") end)
             game.Close:Connect(on_close)
         end)"#,
         )

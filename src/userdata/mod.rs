@@ -1,4 +1,5 @@
 mod cframe;
+mod color3;
 mod instance;
 mod lua_free_value;
 mod object;
@@ -7,6 +8,7 @@ mod r#typeof;
 mod vector3;
 
 pub use cframe::CFrame;
+pub use color3::Color3;
 pub use lua_free_value::{LuaFreeValue, LuaSend};
 pub use object::ObjectRef;
 pub use rbx_script_signal::{

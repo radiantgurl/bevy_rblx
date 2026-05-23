@@ -6,6 +6,7 @@ bevy_rblx_derive::create_enums!([
     AvatarUnificationMode,
     Axis,
     ClientAnimatorThrottlingMode,
+    CloseReason,
     CreatorType,
     FluidForces,
     IKControlConstraintSupport,

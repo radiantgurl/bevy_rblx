@@ -1,23 +1,23 @@
-use crate::core::{Instance, LuaSingleton, ServiceMembers, ThreadIdentity, WorldAccess};
+use crate::core::clock::system_time;
+use crate::core::{LuaSingleton, WorldAccess, ServiceMembers};
 use crate::enums::MessageType;
 use crate::internal_prelude::*;
 use crate::userdata::{ObjectRef, RBXScriptSignal};
 
 use bevy::prelude::*;
 use bevy_rblx_derive::{register, register_class};
-use mlua::ffi::lua_clock;
 use mlua::prelude::*;
 
 #[derive(Resource, Default)]
 pub struct RblxLogs {
-    pub messages: Vec<(MessageType, String, f64)>,
+    pub messages: Vec<(MessageType, String, i64)>,
 }
 
 #[derive(Message, Clone)]
 pub struct LoggedMessage {
     pub msg_type: MessageType,
     pub msg: String,
-    pub time: f64,
+    pub time: i64,
 }
 
 pub fn push_lua_error(lua: &Lua, error: LuaError) {
@@ -32,7 +32,7 @@ pub fn push_log(lua: &Lua, msg_type: MessageType, msg: impl std::fmt::Display) {
     let msg = msg.to_string();
     let world_access = WorldAccess::fetch_readonly(lua);
     let mut commands = world_access.access_commands();
-    let instant = unsafe { lua_clock() };
+    let instant = system_time();
     commands.write_message(LoggedMessage {
         msg_type,
         msg: msg.clone(),
@@ -117,16 +117,36 @@ register_class! {
             lua_todo!()
         }
         fn info(lua: &Lua, this: ObjectRef, message: String, context: Option<LuaTable>) -> LuaResult<()> {
-            lua_todo!()
+            if let Some(ctx) = context {
+                push_log(lua, MessageType::MessageInfo, build_message(message, ctx));
+            } else {
+                push_log(lua, MessageType::MessageInfo, message);
+            }
+            Ok(())
         }
         fn warn(lua: &Lua, this: ObjectRef, message: String, context: Option<LuaTable>) -> LuaResult<()> {
-            lua_todo!()
+            if let Some(ctx) = context {
+                push_log(lua, MessageType::MessageWarning, build_message(message, ctx));
+            } else {
+                push_log(lua, MessageType::MessageWarning, message);
+            }
+            Ok(())
         }
         fn output(lua: &Lua, this: ObjectRef, message: String, context: Option<LuaTable>) -> LuaResult<()> {
-            lua_todo!()
+            if let Some(ctx) = context {
+                push_log(lua, MessageType::MessageOutput, build_message(message, ctx));
+            } else {
+                push_log(lua, MessageType::MessageOutput, message);
+            }
+            Ok(())
         }
         fn log(lua: &Lua, this: ObjectRef, ty: MessageType, message: String, context: Option<LuaTable>) -> LuaResult<()> {
-            lua_todo!()
+            if let Some(ctx) = context {
+                push_log(lua, ty, build_message(message, ctx));
+            } else {
+                push_log(lua, ty, message);
+            }
+            Ok(())
         }
         fn get_log_history(lua: &Lua, this: ObjectRef) -> LuaResult<LuaTable> {
             let wa = WorldAccess::fetch_readonly(lua);

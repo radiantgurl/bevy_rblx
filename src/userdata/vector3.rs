@@ -91,6 +91,7 @@ impl LuaUserData for Vector3 {
                 Ok(Self((this.0 / f64::from_lua(o, lua)? as f32).floor()))
             }
         });
+        methods.add_meta_method("__tostring", |_, this, ()| Ok(format!("({}, {}, {})", this.0.x, this.0.y, this.0.z)));
     }
 }
 

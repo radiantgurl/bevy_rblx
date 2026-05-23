@@ -1,17 +1,13 @@
-use std::{mem::take, process::exit, sync::Arc};
-
 use crate::{
     core::{
-        DisabledObject, FAST_FLAGS, InstanceMembers, LuauContainer, ServiceProvider, WorldAccess,
-        instance::RootInstance, world_access::WorldAccessDestructor,
+        DisabledObject, FAST_FLAGS, InstanceMembers, LuauContainer, ServiceProvider, WorldAccess, engine::ShutdownReason, instance::RootInstance
     },
-    enums::{CreatorType, SignalBehavior},
+    enums::{CloseReason, CreatorType},
     internal_prelude::*,
-    userdata::{FFSignalBehavior, ObjectRef, RBXScriptSignal},
+    userdata::ObjectRef,
 };
-use bevy::{ecs::world::CommandQueue, prelude::*};
+use bevy::prelude::*;
 use mlua::prelude::*;
-use parking_lot::Mutex;
 
 use super::ServiceProviderMembers;
 use bevy_rblx_derive::{fast_flag, register_class};
@@ -87,37 +83,15 @@ register_class! {
             signal.connect(lua, f)?;
             Ok(())
         }
-    }
-}
-
-pub fn bind_close_system_runner(mut app_exit: MessageReader<AppExit>, mut c: Commands) {
-    for _ in app_exit.read() {
-        c.queue(|w: &mut World| {
-            println!("Received app exit");
-            let close = w
-                .query::<&ServiceProviderMembers>()
-                .single(w)
-                .expect("root instance exists while exiting app")
-                .close
-                .reference();
-            {
-                let mut wa = WorldAccess::default();
-                unsafe {
-                    wa.insert_sync_access(w);
-                }
-                FAST_FLAGS.store::<FFSignalBehavior>(SignalBehavior::Immediate as u64);
-
-                close.fire_outside_lua(&mut wa, false, ()).unwrap();
-                wa.clear_sync_access(w);
+        fn shutdown(lua: &Lua, this: ObjectRef, reason: Option<CloseReason>) -> LuaResult<()> {
+            let world_access = WorldAccess::fetch_readonly(lua);
+            let mut commands = world_access.access_commands();
+            if let Some(r) = reason {
+                commands.insert_resource(ShutdownReason(r));
             }
-            cleanup_instances(w);
-            #[cfg(test)]
-            {
-                use crate::core::{Engine, RblxLogs};
-
-                Engine::assert_no_errors(w.resource::<RblxLogs>());
-            }
-        })
+            commands.write_message(AppExit::Success);
+            Ok(())
+        }
     }
 }
 
@@ -140,35 +114,6 @@ pub fn register_game_global(w: &mut World) {
         }
         WorldAccess::fetch(&lua).clear_sync_access(w)
     }
-}
-
-pub fn cleanup_instances(w: &mut World) {
-    let mut containers_qs = w.query_filtered::<&mut LuauContainer, Allow<DisabledObject>>();
-    let containers = containers_qs
-        .iter_mut(w)
-        .map(|mut x| take(&mut x.lua))
-        .collect::<Vec<_>>();
-
-    let arc_w = Arc::new(take(w));
-    let arc_queue = Arc::new(Mutex::new(CommandQueue::default()));
-
-    for lua in containers {
-        unsafe {
-            WorldAccess::fetch(&lua).insert_desync_custom_access(arc_w.clone(), arc_queue.clone());
-        }
-        *lua.app_data_ref::<Arc<Mutex<WorldAccessDestructor>>>()
-            .unwrap()
-            .lock() = WorldAccessDestructor::DestructPhase {
-            commands: arc_queue.clone(),
-        };
-        drop(lua);
-    }
-
-    *w = Arc::into_inner(arc_w).unwrap_or_else(|| {
-        exit(137) // FAILED TO EXIT
-    });
-    let mut queue = Arc::into_inner(arc_queue).unwrap();
-    queue.get_mut().apply(w);
 }
 
 fast_flag!(FFGameCreatorId: u64 = 0);

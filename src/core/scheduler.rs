@@ -396,6 +396,27 @@ impl TaskScheduler {
             Err(LuaError::runtime("script exhausted execution time"))
         }
     }
+    pub(super) fn prepare_for_shutdown(&self) {
+        if !FAST_FLAGS.fetch::<FFTaskSchedulerEraseTableOnShutdown>() {
+            return;
+        }
+        let mut mut_borrow = self.cell.borrow_mut();
+        for pd in [0usize, 1usize] {
+            mut_borrow.defer_next_threads[pd].clear();
+            mut_borrow.defer_threads[pd].clear();
+            mut_borrow.delay_threads[pd].clear();
+            mut_borrow.wait_threads[pd].clear();
+        }
+    }
+    pub(super) fn still_waiting_shutdown(&self) -> bool {
+        let cell = self.cell.borrow();
+        for pd in [0usize, 1usize] {
+            if !cell.defer_next_threads[pd].is_empty() || !cell.defer_threads[pd].is_empty() {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 #[register]
@@ -443,3 +464,4 @@ impl LuaSingleton for TaskScheduler {
 
 fast_flag!(FFTaskSchedulerDisableWatchdog: bool = false);
 fast_flag!(FFTaskSchedulerTimeSensitive: bool = false);
+fast_flag!(FFTaskSchedulerEraseTableOnShutdown: bool = true);

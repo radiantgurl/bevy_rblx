@@ -2,11 +2,12 @@ use bevy::prelude::*;
 use bevy_egui::{
     EguiContexts, EguiPrimaryContextPass,
     egui::{
-        self, FontId, RichText, ScrollArea, TextEdit, TextFormat, Window,
+        self, Color32, FontId, ScrollArea, TextEdit, TextFormat, Window,
         text::{CCursor, CCursorRange, LayoutJob},
         text_edit::TextEditState,
     },
 };
+use chrono::DateTime;
 use mlua::prelude::*;
 
 use crate::{
@@ -119,14 +120,8 @@ pub fn start_input_handler(mut commands: Commands) {
     })
 }
 
-// fn insert_richtext(rich_text: &mut Option<RichText>, msg_type: MessageType, msg: String, timestamp: f64) {
-//     if let Some(x) = rich_text{
-//         x.
-//     }
-// }
-
 #[derive(Resource)]
-struct InterpreterThread(LuaThread);
+pub(super) struct InterpreterThread(LuaThread);
 fn ui_commandline(
     mut contexts: EguiContexts,
 
@@ -136,18 +131,40 @@ fn ui_commandline(
     old_logs: Res<RblxLogs>,
     mut new_logs: MessageReader<LoggedMessage>,
     mut current_logs: Local<Option<LayoutJob>>,
+    mut clear_logs: Local<bool>,
+
+    mut window_open: Local<bool>,
 ) -> Result {
+    const OUTPUT_COLOR: Color32 = Color32::from_gray(200);
+    const INFO_COLOR: Color32 = Color32::from_rgb(0, 111, 196);
+    const WARN_COLOR: Color32 = Color32::from_rgb(252, 175, 53);
+    const ERROR_COLOR: Color32 = Color32::from_rgb(209, 54, 37);
+
+    if !*clear_logs && old_logs.messages.is_empty() {
+        *clear_logs = true;
+        *current_logs = None;
+    } else {
+        *clear_logs = old_logs.messages.is_empty();
+    }
+
     if current_logs.is_none() {
         *current_logs = Some(LayoutJob::default());
         for (msg_type, str, timestamp) in old_logs.messages.iter() {
+            let timestamp = DateTime::from_timestamp_secs(*timestamp)
+                .map(|x| {
+                    x.with_timezone(&chrono::Local)
+                        .format("%H:%M:%S")
+                        .to_string()
+                })
+                .unwrap_or_else(|| "--------".into());
             let (color, output_ty) = match msg_type {
-                MessageType::MessageOutput => (egui::Color32::WHITE, " "),
-                MessageType::MessageInfo => (egui::Color32::BLUE, " [INFO] "),
-                MessageType::MessageWarning => (egui::Color32::YELLOW, " [WARNING] "),
-                MessageType::MessageError => (egui::Color32::RED, " [ERROR] "),
+                MessageType::MessageOutput => (OUTPUT_COLOR, "  "),
+                MessageType::MessageInfo => (INFO_COLOR, "I "),
+                MessageType::MessageWarning => (WARN_COLOR, "W "),
+                MessageType::MessageError => (ERROR_COLOR, "E "),
             };
             let fmt_str = format!(
-                "{}[{timestamp:.3}]{output_ty}{str}",
+                "{}{output_ty}[{timestamp}] {str}",
                 if current_logs.as_ref().unwrap().is_empty() {
                     ""
                 } else {
@@ -160,12 +177,14 @@ fn ui_commandline(
                 TextFormat {
                     color,
                     font_id: FontId::monospace(FontId::default().size),
+
                     ..default()
                 },
             );
         }
         new_logs.clear();
     }
+
     for LoggedMessage {
         msg_type,
         msg,
@@ -173,13 +192,20 @@ fn ui_commandline(
     } in new_logs.read()
     {
         let (color, output_ty) = match msg_type {
-            MessageType::MessageOutput => (egui::Color32::WHITE, " "),
-            MessageType::MessageInfo => (egui::Color32::BLUE, " [INFO] "),
-            MessageType::MessageWarning => (egui::Color32::YELLOW, " [WARNING] "),
-            MessageType::MessageError => (egui::Color32::RED, " [ERROR] "),
+            MessageType::MessageOutput => (OUTPUT_COLOR, "  "),
+            MessageType::MessageInfo => (INFO_COLOR, "I "),
+            MessageType::MessageWarning => (WARN_COLOR, "W "),
+            MessageType::MessageError => (ERROR_COLOR, "E "),
         };
+        let time = DateTime::from_timestamp_secs(*time)
+            .map(|x| {
+                x.with_timezone(&chrono::Local)
+                    .format("%H:%M:%S")
+                    .to_string()
+            })
+            .unwrap_or_else(|| "--------".into());
         let fmt_str = format!(
-            "{}[{time:.3}]{output_ty}{msg}",
+            "{}{output_ty}[{time}] {msg}",
             if current_logs.as_ref().unwrap().is_empty() {
                 ""
             } else {
@@ -197,60 +223,72 @@ fn ui_commandline(
         );
     }
 
-    Window::new("Developer Console").show(contexts.ctx_mut()?, |ui| {
-        let max_x = ui.ctx().viewport_rect().max.x * 0.75;
-        ScrollArea::vertical()
-            .stick_to_bottom(true)
-            .max_width(max_x)
-            .max_height(ui.ctx().viewport_rect().max.y * 0.75)
-            .auto_shrink(false)
-            .show(ui, |ui| {
-                ui.vertical(|ui| {
-                    let label = egui::Label::new(current_logs.as_ref().unwrap().clone())
-                        .halign(egui::Align::Min);
-                    ui.add(label);
-                })
+    if contexts.ctx_mut()?.input(|i| i.key_pressed(egui::Key::F9)) {
+        *window_open = !*window_open;
+    }
+    Window::new("Developer Console")
+        .open(&mut window_open)
+        .collapsible(false)
+        .show(contexts.ctx_mut()?, |ui| {
+            let max_x = ui.ctx().viewport_rect().max.x * 0.75;
+            ScrollArea::vertical()
+                .stick_to_bottom(true)
+                .max_width(max_x)
+                .max_height(ui.ctx().viewport_rect().max.y * 0.75)
+                .auto_shrink(false)
+                .show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        let label = egui::Label::new(current_logs.as_ref().unwrap().clone())
+                            .halign(egui::Align::Min);
+                        ui.add(label);
+                    })
+                });
+            let single_line = ui.add_sized(egui::vec2(max_x, FontId::default().size), {
+                TextEdit::singleline(&mut *code_input).code_editor()
             });
-        let single_line = ui.add_sized(egui::vec2(max_x, FontId::default().size), {
-            TextEdit::singleline(&mut *code_input).font(FontId::monospace(FontId::default().size))
-        });
-        if code_input.len() < 2 {
-            *code_input = "> ".into();
-        }
+            if code_input.len() < 2 {
+                *code_input = "> ".into();
+            }
 
-        ui.ctx().data_mut(|d| {
-            if let Some(mut state) = d.get_persisted::<TextEditState>(single_line.id) {
-                if let Some(r) = state.cursor.char_range()
-                    && (r.contains(CCursorRange::one(CCursor::new(0)))
-                        || r.contains(CCursorRange::one(CCursor::new(1))))
-                {
-                    let mut cc = r.sorted_cursors();
-                    cc[0].index = 2;
-                    state
-                        .cursor
-                        .set_char_range(Some(CCursorRange::two(cc[0], cc[1])));
-                    d.insert_persisted(single_line.id, state);
+            ui.ctx().data_mut(|d| {
+                if let Some(mut state) = d.get_persisted::<TextEditState>(single_line.id) {
+                    if let Some(r) = state.cursor.char_range()
+                        && (r.contains(CCursorRange::one(CCursor::new(0)))
+                            || r.contains(CCursorRange::one(CCursor::new(1))))
+                    {
+                        let mut cc = r.sorted_cursors();
+                        cc[0].index = 2;
+                        state
+                            .cursor
+                            .set_char_range(Some(CCursorRange::two(cc[0], cc[1])));
+                        d.insert_persisted(single_line.id, state);
+                    }
                 }
+            });
+            if single_line.lost_focus()
+                && single_line.ctx.input(|i| i.key_pressed(egui::Key::Enter))
+            {
+                thread.0.resume::<()>(code_input[2..].to_string()).unwrap();
+                let is_empty = if current_logs.as_ref().unwrap().is_empty() {
+                    ""
+                } else {
+                    "\n"
+                };
+                current_logs.as_mut().unwrap().append(
+                    &format!("{is_empty}{}", code_input.as_str()),
+                    0.0,
+                    TextFormat {
+                        color: Color32::from_gray(127),
+                        font_id: FontId::monospace(FontId::default().size),
+                        ..default()
+                    },
+                );
+                *code_input = "> ".into();
+                single_line.request_focus();
+            }
+            if single_line.ctx.input(|i| i.key_pressed(egui::Key::F9)) {
+                single_line.request_focus();
             }
         });
-        if single_line.lost_focus() && single_line.ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-            thread.0.resume::<()>(code_input[2..].to_string()).unwrap();
-            let is_empty = if current_logs.as_ref().unwrap().is_empty() {
-                ""
-            } else {
-                "\n"
-            };
-            current_logs.as_mut().unwrap().append(
-                &format!("{is_empty}{}", code_input.as_str()),
-                0.0,
-                TextFormat {
-                    font_id: FontId::monospace(FontId::default().size),
-                    ..default()
-                },
-            );
-            *code_input = "> ".into();
-            single_line.request_focus();
-        }
-    });
     Ok(())
 }

@@ -1,51 +1,66 @@
 use std::{
     collections::HashMap,
-    mem::take,
+    mem::{swap, take},
     process::exit,
     sync::{Arc, atomic::AtomicBool},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
+#[cfg(test)]
+use bevy::ecs::message::MessageWriter;
 use bevy::{
     DefaultPlugins, MinimalPlugins,
     app::{
-        App, AppLabel, FixedUpdate, Last, PluginGroup as _, PostStartup, PostUpdate, PreUpdate,
-        Startup, Update,
+        App, AppExit, AppLabel, FixedUpdate, Last, PluginGroup as _, PostStartup, PostUpdate,
+        PreUpdate, Startup, Update,
     },
     camera::Camera2d,
     ecs::{
-        error::BevyError,
-        schedule::{IntoScheduleConfigs, Schedule},
-        system::Local,
-        world::{CommandQueue, World},
+        error::BevyError, message::MessageReader, query::Allow, resource::Resource, schedule::{IntoScheduleConfigs, Schedule}, system::{Commands, Local}, world::{CommandQueue, World}
     },
     log::{Level, LogPlugin},
     tasks::{ComputeTaskPool, ParallelSlice},
     time::Time,
 };
-#[cfg(test)]
-use bevy::{app::AppExit, ecs::message::MessageWriter};
 use bevy_egui::EguiPrimaryContextPass;
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
+use bevy_rblx_derive::fast_flag;
 use clap::{ArgAction, value_parser};
+use parking_lot::Mutex;
 
 use crate::{
     core::{
         FAST_FLAGS, FastFlagType, LoggedMessage, LuauContainer, RblxLogs,
-        RefCountedEntityCommandsExt as _, RefCountedPlugin, TaskScheduler, WorldAccess,
-        bind_close_system_runner,
+        RefCountedEntityCommandsExt as _, RefCountedPlugin, ServiceProviderMembers, TaskScheduler,
+        WorldAccess,
         data_model::register_game_global,
         fastflags::FastFlagValue,
-        input::start_input_handler,
+        input::{InterpreterThread, start_input_handler},
         instance::NewInstanceEvent,
         luau::{assign_provenance, create_provenance, erase_provenance},
         object::DisabledObject,
         run_service::RunServiceMembers,
+        scheduler::FFTaskSchedulerTimeSensitive,
+        world_access::WorldAccessDestructor,
     },
-    userdata::{RBXScriptSignal, instance_new},
+    enums::{CloseReason, SignalBehavior},
+    internal_prelude::*,
+    userdata::{FFSignalBehavior, RBXScriptSignal, instance_new},
 };
 
 pub struct Engine;
+#[derive(Resource, Clone, Copy)]
+pub struct ShutdownReason(pub CloseReason);
+
+fn take_world_local(l: &mut Option<World>, real_world: &mut World) -> World {
+    let mut fake_world = l.take().unwrap();
+    swap(&mut fake_world, real_world);
+    fake_world
+}
+fn put_world_local(l: &mut Option<World>, mut fake_world: World, real_world: &mut World) {
+    swap(&mut fake_world, real_world);
+    *l = Some(fake_world);
+}
 
 pub fn initialize(w: &mut World) {
     let container = LuauContainer::default();
@@ -69,7 +84,6 @@ pub fn initialize(w: &mut World) {
         let mut c = w.commands();
         c.entity(root_instance).protect();
     }
-
     w.entity_mut(root_instance).insert(container);
 }
 
@@ -89,13 +103,16 @@ pub fn run_synchronized(world: &mut World) {
         WorldAccess::fetch(&lua).clear_sync_access(world);
     }
 }
-pub fn run_desynchronized(world: &mut World) {
+pub fn run_desynchronized(world: &mut World, mut l: Local<Option<World>>) {
+    if l.is_none() {
+        *l = Some(World::new());
+    }
     let mut containers_qs = world.query::<&LuauContainer>();
     let v = containers_qs
         .iter(world)
         .map(|x| x.lua.clone())
         .collect::<Vec<_>>();
-    let arc = Arc::new(take(world));
+    let arc = Arc::new(take_world_local(&mut l, world));
     let queues = v.as_slice().par_chunk_map(
         ComputeTaskPool::get(),
         (v.len() / ComputeTaskPool::get().thread_num()).max(1),
@@ -125,7 +142,11 @@ pub fn run_desynchronized(world: &mut World) {
             thread_queue
         },
     );
-    *world = Arc::try_unwrap(arc).expect("Failed to unwrap world");
+    put_world_local(
+        &mut l,
+        Arc::into_inner(arc).expect("Failed to unwrap world"),
+        world,
+    );
     for mut i in queues {
         i.apply(world);
     }
@@ -146,13 +167,16 @@ pub fn dispatch_synchronized(world: &mut World) {
         WorldAccess::fetch(&lua).clear_sync_access(world);
     }
 }
-pub fn dispatch_desynchronized(world: &mut World) {
+pub fn dispatch_desynchronized(world: &mut World, mut l: Local<Option<World>>) {
+    if l.is_none() {
+        *l = Some(World::new());
+    }
     let mut containers_qs = world.query::<&LuauContainer>();
     let v = containers_qs
         .iter(world)
         .map(|x| x.lua.clone())
         .collect::<Vec<_>>();
-    let arc = Arc::new(take(world));
+    let arc = Arc::new(take_world_local(&mut l, world));
     let queues = v.as_slice().par_chunk_map(
         ComputeTaskPool::get(),
         (v.len() / ComputeTaskPool::get().thread_num()).max(1),
@@ -182,10 +206,52 @@ pub fn dispatch_desynchronized(world: &mut World) {
             thread_queue
         },
     );
-    *world = Arc::try_unwrap(arc).expect("Failed to unwrap world");
+    put_world_local(
+        &mut l,
+        Arc::into_inner(arc).expect("Failed to unwrap world"),
+        world,
+    );
     for mut i in queues {
         i.apply(world);
     }
+}
+
+fn bind_close_system_runner(mut app_exit: MessageReader<AppExit>, mut c: Commands) {
+    for _ in app_exit.read() {
+        c.queue(Engine::shutdown)
+    }
+}
+
+fn cleanup_instances(w: &mut World) {
+    w.remove_resource::<InterpreterThread>();
+
+    let mut containers_qs = w.query_filtered::<&mut LuauContainer, Allow<DisabledObject>>();
+    let containers = containers_qs
+        .iter_mut(w)
+        .map(|mut x| take(&mut x.lua))
+        .collect::<Vec<_>>();
+
+    let arc_w = Arc::new(take(w));
+    let arc_queue = Arc::new(Mutex::new(CommandQueue::default()));
+
+    for lua in containers {
+        unsafe {
+            WorldAccess::fetch(&lua).insert_desync_custom_access(arc_w.clone(), arc_queue.clone());
+        }
+        *lua.app_data_ref::<Arc<Mutex<WorldAccessDestructor>>>()
+            .unwrap()
+            .lock() = WorldAccessDestructor::DestructPhase {
+            commands: arc_queue.clone(),
+        };
+        lua.gc_restart();
+        drop(lua);
+    }
+
+    *w = Arc::into_inner(arc_w).unwrap_or_else(|| {
+        panic!("cleanup_instances failed during Engine::shutdown");
+    });
+    let mut queue = Arc::into_inner(arc_queue).unwrap();
+    queue.get_mut().apply(w);
 }
 
 macro_rules! create_runservice_trigger {
@@ -198,7 +264,7 @@ macro_rules! create_runservice_trigger {
                 if cached_event.is_none() {
                     let mut members_qs = w.query::<&RunServiceMembers>();
                     let members = members_qs.single(w).expect("run service is initialized");
-                    *cached_event = Some(members.$name.clone());
+                    *cached_event = Some(members.$name.reference());
                 }
 
                 let time = w.resource::<Time>().clone();
@@ -266,13 +332,9 @@ impl Engine {
         app.add_systems(
             PreUpdate,
             (
-                create_provenance,
-                assign_provenance,
                 runservice_event_pre_animation,
                 dispatch_synchronized,
                 dispatch_desynchronized,
-                create_provenance,
-                assign_provenance,
                 runservice_event_pre_simulation,
                 runservice_event_stepped,
                 dispatch_synchronized,
@@ -280,22 +342,18 @@ impl Engine {
             )
                 .chain(),
         );
-        app.add_systems(
-            FixedUpdate,
-            (
-                create_provenance,
-                assign_provenance,
-                // step here
-            )
-                .chain(),
-        );
+        // app.add_systems(
+        //     FixedUpdate,
+        //     (
+        //         // step here
+        //     )
+        //         .chain(),
+        // );
         app.add_systems(
             Update,
             (
                 register_game_global,
                 (
-                    create_provenance,
-                    assign_provenance,
                     runservice_event_post_simulation,
                     dispatch_synchronized,
                     dispatch_desynchronized,
@@ -363,6 +421,7 @@ impl Engine {
                 .add_schedule(Schedule::new(EguiPrimaryContextPass));
             app.world_mut().spawn(Camera2d);
         }
+        app.add_systems(PostStartup, start_input_handler);
 
         Self::additional(&mut app);
 
@@ -377,7 +436,7 @@ impl Engine {
     }
 
     #[cfg(test)]
-    fn generate_exit_after_60_frames(
+    fn generate_exit_after_frame_count(
         mut frame_count: Local<u32>,
         exit_after: Local<u32>,
         mut writer: MessageWriter<AppExit>,
@@ -420,7 +479,7 @@ impl Engine {
             ParamBuilder,
         )
             .build_state(app.world_mut())
-            .build_system(Engine::generate_exit_after_60_frames);
+            .build_system(Engine::generate_exit_after_frame_count);
         app.add_systems(Main, built_system);
 
         Self::additional(&mut app);
@@ -457,12 +516,6 @@ impl Engine {
                     .short('d')
                     .long("debug")
                     .help("Enable debug logging")
-                    .action(ArgAction::SetTrue),
-            )
-            .arg(
-                clap::Arg::new("devconsole")
-                    .long("devconsole")
-                    .long_help("Enables the Developer Console")
                     .action(ArgAction::SetTrue),
             )
             .get_matches();
@@ -522,9 +575,6 @@ impl Engine {
         } else {
             app = Engine::default();
         }
-        if args.get_flag("devconsole") {
-            app.add_systems(PostStartup, start_input_handler);
-        }
 
         if args.get_flag("dryrun") {
             println!("dry run, exiting the app");
@@ -543,4 +593,106 @@ impl Engine {
             }
         }
     }
+
+    pub fn shutdown(w: &mut World) {
+        let close = w
+            .query::<&ServiceProviderMembers>()
+            .single(w)
+            .expect("root instance exists while exiting app")
+            .close
+            .reference();
+        let mut containers_qs = w.query::<&LuauContainer>();
+        for container in containers_qs.iter(w) {
+            TaskScheduler::fetch(&container.lua).prepare_for_shutdown();
+        }
+        let reason = w.get_resource::<ShutdownReason>().copied().map(|x| x.0).unwrap_or(CloseReason::Unknown);
+        let prev = FAST_FLAGS.fetch::<FFSignalBehavior>();
+        {
+            let mut wa = WorldAccess::default();
+            unsafe {
+                wa.insert_sync_access(w);
+            }
+            FAST_FLAGS.store::<FFSignalBehavior>(SignalBehavior::Deferred as u64);
+            close.fire_outside_lua(&mut wa, false, reason).unwrap();
+            wa.clear_sync_access(w);
+        }
+        {
+            FAST_FLAGS.store::<FFSignalBehavior>(prev);
+            FAST_FLAGS.store::<FFTaskSchedulerTimeSensitive>(true);
+            let timer = Instant::now();
+            let mut fake_world = Some(World::new());
+            let mut waiting = containers_qs
+                .iter(w)
+                .map(|x| {
+                    (
+                        x.lua.clone(),
+                        TaskScheduler::fetch(&x.lua).still_waiting_shutdown(),
+                    )
+                })
+                .filter(|(_, waiting)| *waiting)
+                .collect::<Vec<_>>();
+            loop {
+                for (lua, still_waiting) in waiting.iter_mut() {
+                    if *still_waiting {
+                        unsafe {
+                            WorldAccess::fetch(lua).insert_sync_access(w);
+                        }
+                        let task = TaskScheduler::fetch(lua);
+                        task.run(
+                            lua,
+                            false,
+                            true,
+                            Duration::from_secs_f64(0.03),
+                            Some(
+                                Duration::from_secs_f64(FAST_FLAGS.fetch::<FFShutdownTimeout>())
+                                    .checked_sub(timer.elapsed())
+                                    .unwrap_or_default(),
+                            ),
+                        );
+                        WorldAccess::fetch(lua).clear_sync_access(w);
+                        *still_waiting = task.still_waiting_shutdown();
+                    }
+                }
+                let arc_world = Arc::new(take_world_local(&mut fake_world, w));
+                let mut queue = CommandQueue::default();
+                for (lua, still_waiting) in waiting.iter_mut() {
+                    if *still_waiting {
+                        unsafe {
+                            WorldAccess::fetch(lua).insert_desync_access(arc_world.clone());
+                        }
+                        let task = TaskScheduler::fetch(lua);
+                        task.run(
+                            lua,
+                            true,
+                            true,
+                            Duration::from_secs_f64(0.03),
+                            Some(
+                                Duration::from_secs_f64(FAST_FLAGS.fetch::<FFShutdownTimeout>())
+                                    .checked_sub(timer.elapsed())
+                                    .unwrap_or_default(),
+                            ),
+                        );
+                        if let Some(mut q) = WorldAccess::fetch(lua).clear_desync_access() {
+                            queue.append(&mut q);
+                        }
+                        *still_waiting = task.still_waiting_shutdown();
+                    }
+                }
+                put_world_local(&mut fake_world, Arc::into_inner(arc_world).unwrap(), w);
+                queue.apply(w);
+                if !waiting.iter().any(|(_, f)| *f) {
+                    break;
+                }
+            }
+        }
+        cleanup_instances(w);
+        #[cfg(test)]
+        {
+            use crate::core::RblxLogs;
+
+            Engine::assert_no_errors(w.resource::<RblxLogs>());
+        }
+    }
 }
+
+fast_flag!(FFShutdownTimeout: f64 = 30.0);

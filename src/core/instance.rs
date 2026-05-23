@@ -369,6 +369,8 @@ register_class! {
                 let world = world_access.access_read_only();
                 let members = world.get::<InstanceMembers>(this.entity()).expect("is instance");
                 if members.cloning_protected {
+                    drop(world);
+                    drop(world_access);
                     push_log(lua, MessageType::MessageWarning, "object is not cloneable");
                     return Ok(None);
                 }
@@ -618,8 +620,8 @@ register_class! {
                 .collect::<Vec<_>>()
             )
         }
-        fn get_debug_id(lua: &Lua, this: ObjectRef, scope_len: u64) -> LuaResult<String> {
-            lua_todo!()
+        fn get_debug_id(lua: &Lua, this: ObjectRef, _scope_len: u64) -> LuaResult<String> {
+            Ok(this.entity().to_string())
         }
         fn get_descendants(lua: &Lua, this: ObjectRef) -> LuaResult<Vec<ObjectRef>> {
             let v = {
@@ -794,7 +796,10 @@ register_class! {
                     stack.pop();
                 }
             }
-            ptree::print_tree(&tree_build.build()).into_lua_err()?;
+            let mut writer = Vec::<u8>::new();
+            ptree::write_tree(&tree_build.build(), &mut writer).into_lua_err()?;
+            drop(wa);
+            push_log(lua, MessageType::MessageInfo, String::from_utf8_lossy(writer.as_slice()));
             Ok(())
         }
     }

@@ -1,4 +1,5 @@
 pub(crate) mod callback;
+pub(crate) mod clock;
 pub(crate) mod collection_service;
 pub(crate) mod data_model;
 pub(crate) mod engine;
@@ -34,7 +35,7 @@ pub use callback::{
 pub use collection_service::{CollectionService, CollectionServiceMembers};
 pub use data_model::{
     DataModel, DataModelMembers, FFGameCreatorId, FFGameCreatorType, FFGameId, FFJobId, FFPlaceId,
-    FFPlaceVersion, FFPrivateServerId, FFPrivateServerOwnerId, bind_close_system_runner,
+    FFPlaceVersion, FFPrivateServerId, FFPrivateServerOwnerId,
 };
 pub use engine::Engine;
 pub use fastflags::{FAST_FLAGS, FastFlagKey, FastFlagType, FastFlags};
