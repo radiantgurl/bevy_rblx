@@ -17,7 +17,7 @@ cargo build --release
 
 ## Installation
 
-If you're on Linux, you can simply run `cargo install` after cloning the repository to install it instead.
+If you have rustup intalled, simply run `cargo install bevy_rblx` to install it.
 
 ## Contributing
 
