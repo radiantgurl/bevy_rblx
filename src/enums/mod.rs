@@ -1,5 +1,5 @@
-use crate as bevy_rblx;
-use bevy_rblx::core::LuaSingleton;
+use crate::internal_prelude::*;
+use crate::core::lua::LuaSingleton;
 
 bevy_rblx_derive::create_enums!([
     AnimatorRetargetingMode,

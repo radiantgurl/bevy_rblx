@@ -14,8 +14,7 @@ use mlua::prelude::*;
 
 use crate::{
     core::{
-        LoggedMessage, LuauContainer, RblxLogs, TaskScheduler, ThreadIdentity, ThreadIdentityType,
-        WorldAccess, instance::RootInstance, push_log, push_lua_error,
+        LoggedMessage, LuauContainer, RblxLogs, TaskScheduler, ThreadIdentity, WorldAccess, lua::ThreadIdentityType, object::RootInstance, push_log, push_lua_error
     },
     enums::MessageType,
     instance::WorkspaceMembers,

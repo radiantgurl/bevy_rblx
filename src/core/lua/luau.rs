@@ -1,5 +1,5 @@
 use crate::{
-    core::{DisabledObject, FAST_FLAGS, ObjectHeader},
+    core::{FAST_FLAGS, lua::{ThreadIdentityType, singleton::{LuaSingleton, init_singletons}}, object::{ObjectHeader, DisabledObject}},
     internal_prelude::*,
 };
 
@@ -10,8 +10,6 @@ use mlua::{
     ffi::{lua_pushthread, lua_xmove},
     prelude::*,
 };
-
-use crate::core::{LuaSingleton, ThreadIdentityType, singleton::init_singletons};
 
 #[derive(Component, Debug)]
 pub struct LuauContainer {

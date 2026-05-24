@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::core::{FAST_FLAGS, LuaSingleton, logs::push_lua_error};
+use crate::core::{FAST_FLAGS, logs::push_lua_error, lua::singleton::LuaSingleton};
 use bevy::prelude::*;
 use bevy_rblx_derive::{fast_flag, register};
 use mlua::{AppDataRef, prelude::*};
@@ -264,7 +264,7 @@ impl TaskScheduler {
             .checked_duration_since(Instant::now())
             .is_some()
     }
-    pub(crate) fn run(
+    pub(in crate::core) fn run(
         &self,
         lua: &Lua,
         parallel_dispatch: bool,
@@ -368,7 +368,7 @@ impl TaskScheduler {
             .expect("task scheduler is initialized")
     }
 
-    pub unsafe fn start_watchdog(&self, hard_limit_duration: Option<Duration>) {
+    pub(in crate::core) unsafe fn start_watchdog(&self, hard_limit_duration: Option<Duration>) {
         let start = Instant::now();
         let hard_limit_duration = hard_limit_duration.unwrap_or(Duration::from_secs(10));
         let watchdog_time = start
@@ -377,11 +377,11 @@ impl TaskScheduler {
 
         self.watchdog.set(Some(watchdog_time));
     }
-    pub unsafe fn stop_watchdog(&self) {
+    pub(in crate::core) unsafe fn stop_watchdog(&self) {
         self.watchdog.set(None);
     }
 
-    pub fn get_early_interrupt_flag(&self) -> Weak<AtomicBool> {
+    pub(crate) fn get_early_interrupt_flag(&self) -> Weak<AtomicBool> {
         Arc::downgrade(&self.early_interrupt)
     }
 
@@ -396,7 +396,7 @@ impl TaskScheduler {
             Err(LuaError::runtime("script exhausted execution time"))
         }
     }
-    pub(super) fn prepare_for_shutdown(&self) {
+    pub(in crate::core) fn prepare_for_shutdown(&self) {
         if !FAST_FLAGS.fetch::<FFTaskSchedulerEraseTableOnShutdown>() {
             return;
         }
@@ -408,7 +408,7 @@ impl TaskScheduler {
             mut_borrow.wait_threads[pd].clear();
         }
     }
-    pub(super) fn still_waiting_shutdown(&self) -> bool {
+    pub(in crate::core) fn still_waiting_shutdown(&self) -> bool {
         let cell = self.cell.borrow();
         for pd in [0usize, 1usize] {
             if !cell.defer_next_threads[pd].is_empty() || !cell.defer_threads[pd].is_empty() {

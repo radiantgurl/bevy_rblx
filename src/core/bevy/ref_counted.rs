@@ -1,5 +1,5 @@
 use crate::{
-    core::{DisabledObject, FAST_FLAGS},
+    core::{FAST_FLAGS, object::object::DisabledObject},
     internal_prelude::*,
 };
 use bevy::{ecs::system::QueryLens, prelude::*};

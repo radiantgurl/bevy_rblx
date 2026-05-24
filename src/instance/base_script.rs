@@ -4,9 +4,9 @@ use bevy::platform::collections::HashMap;
 use bevy_rblx_derive::{fast_flag, register, register_class};
 use mlua::prelude::*;
 
-use crate::core::instance::RootInstance;
-use crate::core::luau::FFLuauForceJit;
-use crate::core::{FAST_FLAGS, Instance, InstanceMembers, LuaSingleton, ObjectHeader};
+use crate::core::lua::{FFLuauForceJit, LuaSingleton};
+use crate::core::object::{Instance, RootInstance, ObjectHeader};
+use crate::core::{FAST_FLAGS, object::InstanceMembers};
 use crate::enums::RunContext;
 use crate::instance::WorkspaceMembers;
 use crate::internal_prelude::*;

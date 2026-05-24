@@ -1,6 +1,6 @@
 use mlua::Lua;
 
-use crate::core::{LuauContainer, ThreadIdentity, ThreadIdentityType};
+use crate::core::{LuauContainer, ThreadIdentity, lua::ThreadIdentityType};
 
 #[test]
 pub fn test_identities() {
@@ -15,7 +15,6 @@ pub fn test_identities() {
         )
     }
 
-    // let ptr = std::ptr::null()
     assert_eq!(
         ThreadIdentity::fetch(&luau.lua).identity,
         ThreadIdentityType::CoreScript,

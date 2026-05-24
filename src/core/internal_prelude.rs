@@ -1,5 +1,5 @@
 pub(crate) use crate as bevy_rblx;
-pub(crate) use crate::core::refcounted::RefCountedEntityCommandsExt as _;
+pub(crate) use crate::core::bevy::ref_counted::RefCountedEntityCommandsExt as _;
 
 mod sealed {
     use std::any::type_name;

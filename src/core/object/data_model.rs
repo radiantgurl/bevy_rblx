@@ -1,16 +1,12 @@
 use crate::{
-    core::{
-        DisabledObject, FAST_FLAGS, InstanceMembers, LuauContainer, ServiceProvider, WorldAccess, engine::ShutdownReason, instance::RootInstance
-    },
-    enums::{CloseReason, CreatorType},
-    internal_prelude::*,
-    userdata::ObjectRef,
+    core::{FAST_FLAGS, ShutdownReason, lua::{LuauContainer, WorldAccess}, object::{DisabledObject, InstanceMembers, service_provider::{ServiceProvider, ServiceProviderMembers}}}, enums::{CloseReason, CreatorType}, internal_prelude::*, userdata::ObjectRef
 };
 use bevy::prelude::*;
 use mlua::prelude::*;
-
-use super::ServiceProviderMembers;
 use bevy_rblx_derive::{fast_flag, register_class};
+
+#[derive(Clone, Copy, Component, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub struct RootInstance;
 
 register_class! {
     #[require_components(RootInstance, LuauContainer)]

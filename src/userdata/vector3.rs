@@ -1,7 +1,5 @@
 use crate::{
-    core::LuaSingleton,
-    enums::{Axis, NormalId},
-    internal_prelude::*,
+    core::lua::LuaSingleton, enums::{Axis, NormalId}, internal_prelude::*
 };
 use bevy::prelude::*;
 use bevy_rblx_derive::register;

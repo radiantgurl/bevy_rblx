@@ -2,8 +2,8 @@ use std::{ops::Deref, sync::Arc};
 
 use crate::{
     core::{
-        entity_command::EntityCommandWrapper, refcounted_commands::dec_ref_command,
-        world_access::WorldAccessDestructor,
+        WorldAccess, bevy::{EntityCommandWrapper, ref_counted::commands::dec_ref_command}, lua::world_access::WorldAccessDestructor,
+        object::ObjectHeader
     },
     internal_prelude::*,
 };
@@ -12,8 +12,6 @@ use mlua::prelude::*;
 
 use bevy::ecs::entity::Entity;
 use parking_lot::Mutex;
-
-use crate::core::{object::ObjectHeader, world_access::WorldAccess};
 
 pub struct ObjectRef(Entity, WeakLua, Arc<Mutex<WorldAccessDestructor>>);
 

@@ -1,24 +1,21 @@
 use std::mem::take;
 
-use crate::core::luau::ContainerProvenance;
+use crate::core::object::collection_service::CollectionService;
+use crate::core::object::{DisabledObject, RootInstance};
+use crate::core::{ContainerProvenance, push_log};
 use crate::enums::MessageType;
 use crate::userdata::{LuaFreeValue, RBXScriptSignal};
-use crate::{core::WorldAccess, internal_prelude::*, userdata::ObjectRef};
+use crate::{core::{WorldAccess, object::{object::{ObjectVTableCreationPointer, ObjectNewFn,}, ObjectHeader}}, internal_prelude::*, userdata::ObjectRef};
 use bevy::ecs::entity::{EntityCloner, EntityHashMap};
 use bevy::prelude::*;
 
 use bevy::{
-    ecs::{component::Component, hierarchy::Children, name::Name, system::EntityCommands},
+    ecs::{hierarchy::Children, name::Name, system::EntityCommands},
     platform::collections::HashMap,
 };
 use bevy_rblx_derive::register_class;
 use lazy_static::lazy_static;
 use mlua::prelude::*;
-
-use crate::core::object::ObjectNewFn;
-use crate::core::{
-    CollectionService, DisabledObject, ObjectHeader, ObjectVTableCreationPointer, push_log,
-};
 
 pub struct InstanceConstructor {
     visible: HashMap<&'static str, fn(&Lua, EntityCommands) -> LuaResult<()>>,
@@ -96,9 +93,6 @@ impl InstanceConstructor {
         }
     }
 }
-
-#[derive(Clone, Copy, Component, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
-pub struct RootInstance;
 
 pub fn remove_parent(lua: &Lua, this: Entity, new_parent: Option<Entity>) -> LuaResult<()> {
     let mut events: Vec<RBXScriptSignal> = Vec::new();

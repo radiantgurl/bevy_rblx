@@ -1,11 +1,11 @@
-use crate::core::callback::LuaPrioCallbackTableCached;
+use crate::core::lua::callback::LuaPrioCallbackTableCached;
 use crate::enums::{PredictionMode, PredictionStatus, RunState, StepFrequency};
 use crate::internal_prelude::*;
 use bevy::platform::collections::HashMap;
 use bevy_rblx_derive::{fast_flag, register_class};
 use mlua::prelude::*;
 
-use crate::core::{FAST_FLAGS, ServiceMembers, WorldAccess};
+use crate::core::{FAST_FLAGS, WorldAccess, object::ServiceMembers};
 use crate::userdata::{ObjectRef, RBXScriptConnection, RBXScriptSignal};
 
 register_class! {

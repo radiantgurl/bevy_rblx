@@ -4,7 +4,7 @@ use mlua::prelude::*;
 // use bevy::prelude::*;
 use crate::internal_prelude::*;
 
-use crate::core::ServiceMembers;
+use crate::core::object::ServiceMembers;
 use crate::instance::ModelMembers;
 
 register_class! {

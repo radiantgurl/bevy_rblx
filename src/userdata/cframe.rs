@@ -1,4 +1,4 @@
-use crate::{core::LuaSingleton, enums::RotationOrder, internal_prelude::*, userdata::Vector3};
+use crate::{core::lua::LuaSingleton, enums::RotationOrder, internal_prelude::*, userdata::Vector3};
 use bevy::prelude::*;
 use bevy_rblx_derive::register;
 use mlua::prelude::*;

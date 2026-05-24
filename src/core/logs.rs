@@ -1,5 +1,5 @@
-use crate::core::clock::system_time;
-use crate::core::{LuaSingleton, WorldAccess, ServiceMembers};
+use crate::core::lua::{system_time, LuaSingleton, WorldAccess};
+use crate::core::object::ServiceMembers;
 use crate::enums::MessageType;
 use crate::internal_prelude::*;
 use crate::userdata::{ObjectRef, RBXScriptSignal};

@@ -15,11 +15,11 @@ pub mod internal {
     pub use crate::core::ThreadIdentity;
     pub use crate::core::WorldAccess;
     pub use crate::core::fastflags::{FastFlagKeyInsert, FastFlagKeyInserter};
+    pub use crate::core::lua::CachedLuaFunction;
     pub use crate::core::object::{
-        CachedLuaFunction, OBJECT_VTABLES, ObjectHeader, ObjectMethodInfo, ObjectNewFn,
-        ObjectPropertyInfo,
+        OBJECT_VTABLES, ObjectHeader,
+        ObjectVTable, object::{ObjectMethodInfo, ObjectNewFn, ObjectPropertyInfo, ObjectVTableCreationPointer}
     };
-    pub use crate::core::{ObjectVTable, ObjectVTableCreationPointer};
 
     pub use bevy::ecs::entity::Entity;
     pub use bevy::ecs::system::EntityCommands;
@@ -31,6 +31,8 @@ pub mod internal {
 
     pub use crate::userdata::LuaSend;
     pub use crate::userdata::ObjectRef;
+
+    pub use crate::core::lua::singleton::SingletonRegisterFn;
 
     pub use static_assertions::assert_impl_all;
 }

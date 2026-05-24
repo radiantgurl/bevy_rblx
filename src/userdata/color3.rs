@@ -2,7 +2,7 @@ use bevy_rblx_derive::register;
 use mlua::prelude::*;
 
 use crate::internal_prelude::*;
-use crate::core::LuaSingleton;
+use crate::core::lua::LuaSingleton;
 
 #[derive(Clone, Copy, PartialEq, Default, Debug, FromLua)]
 pub struct Color3 {

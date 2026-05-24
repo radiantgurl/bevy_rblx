@@ -3,7 +3,7 @@ use mlua::prelude::*;
 
 use super::InstanceMembers;
 use crate::{
-    core::{Instance, OBJECT_VTABLES, WorldAccess},
+    core::{WorldAccess, object::{Instance, OBJECT_VTABLES}},
     internal_prelude::*,
     userdata::{ObjectRef, RBXScriptSignal, instance_new},
 };

@@ -1,10 +1,7 @@
-use crate::internal_prelude::*;
+use crate::{core::{lua::{LuaSingleton, FFLuauForceJit}, WorldAccess, object::ObjectHeader, FAST_FLAGS}, internal_prelude::*};
 use crate::userdata::ObjectRef;
 use bevy_rblx_derive::register;
 use mlua::prelude::*;
-
-use crate::core::luau::FFLuauForceJit;
-use crate::core::{FAST_FLAGS, LuaSingleton, ObjectHeader, WorldAccess};
 
 pub struct TypeOfFn;
 

@@ -3,14 +3,13 @@ use std::mem::{replace, take};
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
+use crate::core::lua::singleton::LuaSingleton;
 use crate::{self as bevy_rblx};
 use bevy::ecs::world::CommandQueue;
 use bevy::prelude::*;
 use bevy_rblx_derive::register;
 use mlua::{AppDataRef, AppDataRefMut, prelude::*};
 use parking_lot::{Mutex, MutexGuard};
-
-use crate::core::LuaSingleton;
 
 #[derive(Default)]
 enum InternalWorldAccess {

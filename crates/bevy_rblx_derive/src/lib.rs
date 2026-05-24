@@ -315,7 +315,7 @@ pub fn create_enums(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
             }
         }
         #[register]
-        impl bevy_rblx::core::LuaSingleton for LuaEnums {
+        impl LuaSingleton for LuaEnums {
             fn register_singleton(lua: &Lua) -> LuaResult<()> {
                 lua.globals().raw_set("Enums", LuaEnums)?;
                 Ok(())
@@ -346,8 +346,8 @@ pub fn register(
     }
     quote! {
         #impl_block
-        inventory::submit!(
-            bevy_rblx::core::singleton::SingletonRegisterFn(#name::register_singleton)
+        bevy_rblx::internal::inventory::submit!(
+            bevy_rblx::internal::SingletonRegisterFn(#name::register_singleton)
         );
     }
     .into()

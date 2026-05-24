@@ -1,17 +1,12 @@
 use std::{mem::take, sync::LazyLock};
 
 use crate::{
-    core::{ThreadIdentity, WorldAccess},
-    internal_prelude::*,
+    core::{SecurityContext, ThreadIdentity, WorldAccess, bevy::RefCounted, lua::CachedLuaFunction},
     userdata::{LuaFreeValue, ObjectRef, RBXScriptSignal},
 };
-
-use bevy::{platform::collections::HashMap, prelude::*};
-use bevy_rblx_derive::register;
 use lazy_static::lazy_static;
 use mlua::prelude::*;
-
-use crate::core::{LuaSingleton, RefCounted, SecurityContext};
+use bevy::{platform::collections::HashMap, prelude::*};
 
 #[derive(Component, Clone, Debug)]
 #[require(RefCounted)]
@@ -116,34 +111,6 @@ impl ObjectPropertyInfo {
             }
         }
         res
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct CachedLuaFunction(fn(&Lua) -> LuaFunction);
-
-impl CachedLuaFunction {
-    pub fn fetch(&self, lua: &Lua) -> LuaFunction {
-        lua.app_data_mut::<CachedLuaFunctions>()
-            .unwrap()
-            .0
-            .entry(self.0 as usize)
-            .or_insert_with(|| self.0(lua))
-            .clone()
-    }
-    pub const fn new(generator: fn(&Lua) -> LuaFunction) -> Self {
-        Self(generator)
-    }
-}
-
-#[derive(Default)]
-struct CachedLuaFunctions(HashMap<usize, LuaFunction>);
-
-#[register]
-impl LuaSingleton for CachedLuaFunctions {
-    fn register_singleton(lua: &Lua) -> LuaResult<()> {
-        lua.set_app_data(CachedLuaFunctions::default());
-        Ok(())
     }
 }
 

@@ -3,12 +3,12 @@ use bevy::{
     platform::collections::{HashMap, HashSet},
 };
 
-use crate::internal_prelude::*;
+use crate::{core::bevy::RefCounted, internal_prelude::*};
 use bevy_rblx_derive::register_class;
 use mlua::prelude::*;
 
 use crate::{
-    core::{RefCounted, ServiceMembers, WorldAccess},
+    core::{WorldAccess, object::ServiceMembers},
     userdata::{LuaSendRBXScriptConnection, ObjectRef, RBXScriptSignal},
 };
 

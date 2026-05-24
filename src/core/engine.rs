@@ -25,23 +25,12 @@ use bevy::{
 use bevy_egui::EguiPrimaryContextPass;
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 use bevy_rblx_derive::fast_flag;
-use clap::{ArgAction, value_parser};
+use clap::{ArgAction, ArgMatches, value_parser};
 use parking_lot::Mutex;
 
 use crate::{
     core::{
-        FAST_FLAGS, FastFlagType, LoggedMessage, LuauContainer, RblxLogs,
-        RefCountedEntityCommandsExt as _, RefCountedPlugin, ServiceProviderMembers, TaskScheduler,
-        WorldAccess,
-        data_model::register_game_global,
-        fastflags::FastFlagValue,
-        input::{InterpreterThread, start_input_handler},
-        instance::NewInstanceEvent,
-        luau::{assign_provenance, create_provenance, erase_provenance},
-        object::DisabledObject,
-        run_service::RunServiceMembers,
-        scheduler::FFTaskSchedulerTimeSensitive,
-        world_access::WorldAccessDestructor,
+        FAST_FLAGS, FastFlagType, LoggedMessage, LuauContainer, RblxLogs, TaskScheduler, WorldAccess, bevy::ref_counted::RefCountedPlugin, fastflags::FastFlagValue, input::{InterpreterThread, start_input_handler}, lua::{FFTaskSchedulerTimeSensitive, clock, luau::{assign_provenance, create_provenance, erase_provenance}, world_access::WorldAccessDestructor}, object::{DisabledObject, NewInstanceEvent, RunServiceMembers, data_model::register_game_global, service_provider::ServiceProviderMembers}
     },
     enums::{CloseReason, SignalBehavior},
     internal_prelude::*,
@@ -64,14 +53,14 @@ fn put_world_local(l: &mut Option<World>, mut fake_world: World, real_world: &mu
 
 pub fn initialize(w: &mut World) {
     let container = LuauContainer::default();
+    clock(); // initialize clock
     let root_instance;
     {
         unsafe {
             WorldAccess::fetch(&container.lua).insert_sync_access(w);
         }
 
-        root_instance = instance_new(&container.lua, "DataModel".to_owned())
-            .expect("datamodel was created")
+        root_instance = instance_new(&container.lua, "DataModel".to_owned()).unwrap()
             .entity();
 
         instance_new(&container.lua, "RunService".to_owned()).unwrap();
@@ -449,7 +438,7 @@ impl Engine {
 
     #[cfg(test)]
     pub fn test_mode(exit_after_frames: u32) -> App {
-        use crate::core::{FAST_FLAGS, scheduler::FFTaskSchedulerDisableWatchdog};
+        use crate::core::{FAST_FLAGS, lua::FFTaskSchedulerDisableWatchdog};
         use bevy::{
             app::{Main, PluginGroup as _, RunMode, ScheduleRunnerPlugin},
             ecs::system::{LocalBuilder, ParamBuilder, SystemParamBuilder},
@@ -486,46 +475,13 @@ impl Engine {
 
         app
     }
-    #[inline]
-    pub fn main() {
-        let args = clap::command!()
-            .color(clap::ColorChoice::Always)
-            .arg(
-                clap::Arg::new("headless")
-                    .long("headless")
-                    .long_help("Run the engine in server mode")
-                    .action(ArgAction::SetTrue),
-            )
-            .arg(
-                clap::Arg::new("fastflag")
-                    .short('f')
-                    .long("fastflag")
-                    .help("Set a fast flag")
-                    .value_names(["FLAG", "VALUE"])
-                    .value_parser(value_parser!(String)),
-            )
-            .arg(
-                clap::Arg::new("dryrun")
-                    .short('n')
-                    .long("dry-run")
-                    .help("Initialize the app and exit after")
-                    .action(ArgAction::SetTrue),
-            )
-            .arg(
-                clap::Arg::new("debug")
-                    .short('d')
-                    .long("debug")
-                    .help("Enable debug logging")
-                    .action(ArgAction::SetTrue),
-            )
-            .get_matches();
-        let mut app;
+    
+    fn parse_fast_flags(args: &ArgMatches) {
         if let Some(fastflags) = args.get_occurrences("fastflag") {
             let ff_types = FAST_FLAGS.names_and_types().collect::<HashMap<_, _>>();
             for mut occurence in fastflags {
                 let flag_name: &String = occurence.next().unwrap();
                 let flag_value: &String = occurence.next().unwrap();
-                println!("{flag_name} {flag_value}");
                 if let Some(ff_type) = ff_types.get(flag_name.as_str()) {
                     let parsed = match ff_type {
                         FastFlagType::String => FastFlagValue::String(flag_value.clone()),
@@ -569,7 +525,54 @@ impl Engine {
                 }
             }
         }
+    }
+
+    #[inline(always)]
+    pub fn main() {
+        let args = clap::command!()
+            .color(clap::ColorChoice::Always)
+            .arg(
+                clap::Arg::new("headless")
+                    .long("headless")
+                    .long_help("Run the engine in server mode")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                clap::Arg::new("integrated-server")
+                    .long("integrated-server")
+                    .help("Adds an integrated server to a client")
+                    .long_help("Adds an integrated server to the client build. May not be used in conjunction with --headless")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                clap::Arg::new("fastflag")
+                    .short('f')
+                    .long("fastflag")
+                    .help("Set a fast flag")
+                    .value_names(["FLAG", "VALUE"])
+                    .value_parser(value_parser!(String)),
+            )
+            .arg(
+                clap::Arg::new("dryrun")
+                    .short('n')
+                    .long("dry-run")
+                    .help("Initialize the app and exit after")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                clap::Arg::new("debug")
+                    .short('d')
+                    .long("debug")
+                    .help("Enable debug logging")
+                    .action(ArgAction::SetTrue),
+            )
+            .get_matches();
+        let mut app;
+
+        Engine::parse_fast_flags(&args);
+
         DEBUG_FLAG.store(args.get_flag("debug"), std::sync::atomic::Ordering::Relaxed);
+
         if args.get_flag("headless") {
             app = Engine::headless();
         } else {
@@ -580,6 +583,7 @@ impl Engine {
             println!("dry run, exiting the app");
             exit(0);
         }
+        
         app.run();
     }
 

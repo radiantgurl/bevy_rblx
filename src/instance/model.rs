@@ -5,7 +5,7 @@ use crate::internal_prelude::*;
 use bevy::prelude::*;
 use mlua::prelude::*;
 
-use crate::core::{InstanceMembers, WorldAccess};
+use crate::core::{WorldAccess, object::InstanceMembers};
 use crate::userdata::{CFrame, ObjectRef};
 
 register_class! {

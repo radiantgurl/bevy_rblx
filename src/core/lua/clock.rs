@@ -5,8 +5,7 @@ use chrono::Utc;
 use lazy_static::lazy_static;
 use mlua::prelude::*;
 
-use crate::core::LuaSingleton;
-use crate::internal_prelude::*;
+use crate::{core::lua::singleton::LuaSingleton, internal_prelude::*};
 
 lazy_static! {
     static ref CLOCK: Instant = Instant::now();

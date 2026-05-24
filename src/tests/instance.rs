@@ -5,7 +5,7 @@ use bevy::{
     ecs::{entity::Entity, query::With, resource::Resource, world::World},
 };
 
-use crate::core::{Engine, LuauContainer, instance::RootInstance};
+use crate::core::{Engine, LuauContainer, object::RootInstance};
 
 #[test]
 pub fn simple_creation_and_deletion() {
