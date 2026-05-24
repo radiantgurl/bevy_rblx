@@ -297,10 +297,7 @@ fn ui_commandline(
 }
 
 #[derive(Default)]
-pub struct DevConsoleExtension {
-    server_side: bool,
-}
-
+pub struct DevConsoleExtension;
 #[register]
 impl EngineExtension for DevConsoleExtension {
     fn id(&self) -> &'static str {
@@ -312,7 +309,7 @@ impl EngineExtension for DevConsoleExtension {
     }
 
     fn dyn_clone(&mut self, _app: &mut App) -> Box<dyn EngineExtension> {
-        Box::new(Self { server_side: true })
+        Box::new(Self)
     }
 
     fn name(&self) -> &'static str {

@@ -1,8 +1,7 @@
 use std::{
-    io::Write,
     mem::{swap, take},
     process::exit,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{Arc, atomic::AtomicU8},
     time::{Duration, Instant},
 };
 
@@ -11,7 +10,7 @@ use bevy::ecs::message::MessageWriter;
 use bevy::{
     DefaultPlugins, MinimalPlugins,
     app::{
-        App, AppExit, AppLabel, FixedUpdate, Last, PluginGroup as _, PostStartup, PostUpdate,
+        App, AppExit, AppLabel, FixedUpdate, Last, PluginGroup as _, PostUpdate,
         PreUpdate, Startup, Update,
     },
     camera::Camera2d,
@@ -51,9 +50,7 @@ use crate::{
             world_access::WorldAccessDestructor,
         },
         object::{
-            DisabledObject, NewInstanceEvent, RunServiceMembers,
-            data_model::register_game_and_workspace_global,
-            service_provider::ServiceProviderMembers,
+            DisabledObject, NewInstanceEvent, RunServiceMembers, data_model::register_game_and_workspace_global, run_service::RunService, service_provider::ServiceProviderMembers
         },
     },
     enums::{CloseReason, SignalBehavior},
@@ -258,6 +255,7 @@ fn cleanup_instances(w: &mut World) {
             commands: arc_queue.clone(),
         };
         lua.gc_restart();
+        lua.set_globals(lua.create_table().unwrap()).unwrap();
         drop(lua);
     }
 
@@ -319,7 +317,20 @@ create_runservice_trigger!(stepped);
 #[derive(AppLabel, Clone, Copy, Hash, Debug, Default, PartialEq, Eq)]
 pub struct IntegratedServer;
 
-static DEBUG_FLAG: AtomicBool = AtomicBool::new(false);
+static DEBUG_FLAG: AtomicU8 = AtomicU8::new(0);
+
+enum EnabledExts {
+    Disable(Vec<String>),
+    Enable(Vec<String>)
+}
+impl EnabledExts {
+    fn should_be_enabled(&self, id: &'static str, default_enable: bool) -> bool {
+        match self {
+            EnabledExts::Disable(items) => !items.contains(&id.to_owned()) && default_enable,
+            EnabledExts::Enable(items) => items.contains(&id.to_owned()),
+        }
+    }
+}
 
 impl Engine {
     fn additional(app: &mut App) {
@@ -362,13 +373,13 @@ impl Engine {
             )
                 .chain(),
         );
-        // app.add_systems(
-        //     FixedUpdate,
-        //     (
-        //         // step here
-        //     )
-        //         .chain(),
-        // );
+        app.add_systems(
+            FixedUpdate,
+            (
+                RunService::simulation_hook
+            )
+                .chain(),
+        );
         app.add_systems(
             Update,
             (
@@ -390,29 +401,40 @@ impl Engine {
                     .chain(),
             ),
         );
-        app.add_systems(
-            PostUpdate,
-            (
-                create_provenance,
-                assign_provenance,
-                runservice_event_pre_render,
-                dispatch_synchronized,
-                dispatch_desynchronized,
-            )
-                .chain(),
-        );
+        if app.world().contains_resource::<Headless>() {
+            app.add_systems(
+                PostUpdate,
+                (
+                    create_provenance,
+                    assign_provenance,
+                )
+                    .chain(),
+            );
+        } else {
+            app.add_systems(
+                PostUpdate,
+                (
+                    create_provenance,
+                    assign_provenance,
+                    runservice_event_pre_render,
+                    dispatch_synchronized,
+                    dispatch_desynchronized,
+                    RunService::render_hook
+                )
+                    .chain(),
+            );
+        }
         app.add_systems(Last, (bind_close_system_runner, erase_provenance));
     }
-
     pub fn headless() -> App {
         let mut app = App::new();
         app.world_mut().insert_resource(Headless);
 
         app.add_plugins(MinimalPlugins.build().add(LogPlugin {
-            level: if DEBUG_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
-                Level::DEBUG
-            } else {
-                Level::INFO
+            level: match DEBUG_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
+                0 => Level::INFO,
+                1 => Level::DEBUG,
+                _ => Level::TRACE
             },
             ..Default::default()
         }));
@@ -421,15 +443,14 @@ impl Engine {
 
         app
     }
-
     pub fn default() -> App {
         let mut app = App::new();
 
         app.add_plugins(DefaultPlugins.set(LogPlugin {
-            level: if DEBUG_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
-                Level::DEBUG
-            } else {
-                Level::INFO
+            level: match DEBUG_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
+                0 => Level::INFO,
+                1 => Level::DEBUG,
+                _ => Level::TRACE
             },
             ..Default::default()
         }));
@@ -446,14 +467,12 @@ impl Engine {
 
         app
     }
-
     pub fn insert_integrated_server(client: &mut App) {
         let mut server = Self::headless();
 
         let server_subapp = take(&mut server.sub_apps_mut().main);
         client.insert_sub_app(IntegratedServer, server_subapp);
     }
-
     #[cfg(test)]
     fn generate_exit_after_frame_count(
         mut frame_count: Local<u32>,
@@ -465,7 +484,6 @@ impl Engine {
         }
         *frame_count += 1;
     }
-
     #[cfg(test)]
     pub fn test_mode(exit_after_frames: u32) -> App {
         use crate::core::{FAST_FLAGS, lua::FFTaskSchedulerDisableWatchdog};
@@ -503,15 +521,18 @@ impl Engine {
 
         Self::additional(&mut app);
 
-        Engine::load_extensions(&mut app);
+        Engine::load_extensions(&mut app, EnabledExts::Disable(Vec::default()));
 
         app
     }
-    fn load_extensions(app: &mut App) {
+    fn load_extensions(app: &mut App, enabled_exts: EnabledExts) {
         let mut exts: HashMap<&'static str, Box<dyn EngineExtension>> = HashMap::new();
         let mut ext_loaders: HashMap<&'static str, Box<dyn EngineExtension>> = HashMap::new();
         for hook in inventory::iter::<crate::core::extension::EngineExtensionHook>() {
             let ext = hook.0();
+            if !enabled_exts.should_be_enabled(ext.id(), ext.default_enabled()) {
+                continue;
+            }
             if ext.init_level() == EngineExtensionInitLevel::ExtLoader {
                 let id = ext.id();
                 assert!(
@@ -531,6 +552,7 @@ impl Engine {
         }
 
         exts.extend(ext_loaders.into_iter());
+        exts.retain(|id, _| enabled_exts.should_be_enabled(*id, true));
         for ext in exts.values_mut() {
             ext.engine_build(app);
         }
@@ -546,6 +568,14 @@ impl Engine {
         }
         app.world_mut().insert_resource(EngineExtensions(exts));
     }
+    fn parse_enabled_exts(args: &ArgMatches, enabled_exts: &mut EnabledExts) {
+        if let Some(enabled) = args.get_one::<String>("enabled-exts") {
+            *enabled_exts = EnabledExts::Enable(enabled.split(",").map(|x| x.to_owned()).collect());
+        } else if let Some(disable) = args.get_one::<String>("disable-exts") {
+            *enabled_exts = EnabledExts::Disable(disable.split(",").map(|x| x.to_owned()).collect());
+        }
+    }    
+    
     fn parse_fast_flags(args: &ArgMatches) {
         if let Some(fastflags) = args.get_occurrences("fastflag") {
             let ff_types = FAST_FLAGS.names_and_types().collect::<HashMap<_, _>>();
@@ -603,12 +633,14 @@ impl Engine {
             .color(clap::ColorChoice::Always)
             .arg(
                 clap::Arg::new("headless")
+                    .help_heading("Runtime")
                     .long("headless")
                     .long_help("Run the engine in server mode")
                     .action(ArgAction::SetTrue),
             )
             .arg(
                 clap::Arg::new("integrated-server")
+                    .help_heading("Runtime")
                     .long("integrated-server")
                     .help("Adds an integrated server to a client")
                     .long_help("Adds an integrated server to the client build.\nIncompatible with --headless")
@@ -617,6 +649,7 @@ impl Engine {
             )
             .arg(
                 clap::Arg::new("fastflag")
+                    .help_heading("Config")
                     .short('f')
                     .long("fastflag")
                     .help("Set a fast flag")
@@ -624,7 +657,30 @@ impl Engine {
                     .value_parser(value_parser!(String)),
             )
             .arg(
-                clap::Arg::new("dryrun")
+                clap::Arg::new("enabled-exts")
+                    .help_heading("Config")
+                    .long("enabled-exts")
+                    .help("Only enable these extensions")
+                    .long_help("Only enable these extensions.\nThe list of extensions is as a single, comma separated argument.")
+                    .conflicts_with("disable-exts")
+                    .value_names(["EXTENSIONS"])
+                    .action(ArgAction::Set)
+                    .value_parser(value_parser!(String)),
+            )
+            .arg(
+                clap::Arg::new("disable-exts")
+                    .help_heading("Config")
+                    .long("disable-exts")
+                    .help("Enable default and disable these extensions")
+                    .long_help("Enable default and disable thes extensions\nThe list of extensions is as a single, comma separated argument.")
+                    .conflicts_with("enabled-exts")
+                    .value_names(["EXTENSIONS"])
+                    .action(ArgAction::Set)
+                    .value_parser(value_parser!(String)),
+            )
+            .arg(
+                clap::Arg::new("dry-run")
+                    .help_heading("Runtime")
                     .short('n')
                     .long("dry-run")
                     .help("Initialize the app and exit after")
@@ -632,17 +688,19 @@ impl Engine {
             )
             .arg(
                 clap::Arg::new("debug")
-                    .short('d')
-                    .long("debug")
-                    .help("Enable debug logging")
-                    .action(ArgAction::SetTrue),
+                    .short('v')
+                    .long("verbose")
+                    .alias("debug")
+                    .help("Enable verbose logging")
+                    .long_help("Enable verbose logging\nPassing this twice enables trace logging")
+                    .action(ArgAction::Count),
             )
             .get_matches();
         let mut app;
 
         Engine::parse_fast_flags(&args);
 
-        DEBUG_FLAG.store(args.get_flag("debug"), std::sync::atomic::Ordering::Relaxed);
+        DEBUG_FLAG.store(args.get_count("debug"), std::sync::atomic::Ordering::Relaxed);
 
         if args.get_flag("headless") {
             app = Engine::headless();
@@ -652,10 +710,11 @@ impl Engine {
         if args.get_flag("integrated-server") {
             Engine::insert_integrated_server(&mut app);
         }
+        let mut enabled_exts = EnabledExts::Disable(Vec::new());
+        Engine::parse_enabled_exts(&args, &mut enabled_exts);
+        Engine::load_extensions(&mut app, enabled_exts);
 
-        Engine::load_extensions(&mut app);
-
-        if args.get_flag("dryrun") {
+        if args.get_flag("dry-run") {
             println!("dry run, exiting the app");
             exit(0);
         }

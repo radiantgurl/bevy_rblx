@@ -1,4 +1,4 @@
-use bevy::ecs::{entity::Entity, query::With};
+use bevy::ecs::{entity::Entity, query::With, system::{Commands, Query}};
 use bevy_rblx_derive::register_class;
 use mlua::prelude::*;
 
@@ -30,4 +30,8 @@ register_class! {
     priv abstract Service(Instance)
     members {}
     methods {}
+}
+
+pub(in crate::core) fn auto_disable_objects(mut commands: Commands, q: Query<Entity>) {
+
 }

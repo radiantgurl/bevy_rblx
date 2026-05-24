@@ -71,25 +71,19 @@ impl Clone for RefCounted {
 }
 
 impl RefCounted {
-    pub unsafe fn inc(&self) {
-        self.count.fetch_add(1, Ordering::AcqRel);
+    pub unsafe fn inc(&mut self) -> u32 {
+        let r = self.count.fetch_add(1, Ordering::AcqRel)+1;
         if let Some(x) = self.group.as_ref() {
-            x.inner.fetch_add(1, Ordering::AcqRel);
+            return x.inner.fetch_add(1, Ordering::AcqRel)+1;
         }
+        r
     }
-    pub unsafe fn dec(&self) {
-        self.count.fetch_sub(1, Ordering::AcqRel);
+    pub unsafe fn dec(&mut self) -> u32 {
+        let r = self.count.fetch_sub(1, Ordering::AcqRel)-1;
         if let Some(x) = self.group.as_ref() {
-            x.inner.fetch_add(1, Ordering::AcqRel);
+            return x.inner.fetch_sub(1, Ordering::AcqRel)-1;
         }
-    }
-
-    pub fn should_delete(&self) -> bool {
-        if self.group.is_some() {
-            self.group.as_ref().unwrap().inner.load(Ordering::Acquire) == 0
-        } else {
-            self.count.load(Ordering::Acquire) == 0
-        }
+        r
     }
     pub fn should_delete_mut(&mut self) -> bool {
         if self.group.is_some() {
@@ -100,10 +94,18 @@ impl RefCounted {
     }
 
     pub fn fetch_count(&self) -> u32 {
-        self.count.load(Relaxed)
+        if self.group.is_some() {
+            self.group.as_ref().unwrap().inner.load(Relaxed)
+        } else {
+            self.count.load(Relaxed)
+        }
     }
     pub fn fetch_count_mut(&mut self) -> u32 {
-        *self.count.get_mut()
+        if self.group.is_some() {
+            self.group.as_ref().unwrap().inner.load(Ordering::Acquire)
+        } else {
+            *self.count.get_mut()
+        }
     }
 
     pub fn new() -> Self {
@@ -137,7 +139,7 @@ impl RefCounted {
     }
     pub unsafe fn set_group(&mut self, group: Option<RefCountedGroup>) {
         self.group = group;
-        let c = self.fetch_count_mut();
+        let c = *self.count.get_mut();
         if let Some(x) = self.group.as_ref() {
             unsafe { x.inc_multiple(c) };
         }
@@ -152,20 +154,22 @@ pub trait RefCountedEntityCommandsExt: Sized {
 
 pub mod commands {
     use super::{EntityWorldMut, RefCounted, Result};
-    pub fn inc_ref_command(w: EntityWorldMut) -> Result<()> {
-        unsafe {
-            w.get::<RefCounted>()
+    pub fn inc_ref_command(mut w: EntityWorldMut) -> Result<()> {
+        let new_count = unsafe {
+            w.get_mut::<RefCounted>()
                 .ok_or_else(|| "not a refcounted")?
                 .inc()
         };
+        bevy::log::trace!(target: "bevy_rblx::RefCounted", "incrementing ref for {}, new count: {new_count}", w.id());
         Ok(())
     }
-    pub fn dec_ref_command(w: EntityWorldMut) -> Result<()> {
-        unsafe {
-            w.get::<RefCounted>()
-                .ok_or_else(|| "not a refcounted")?
-                .dec()
+    pub fn dec_ref_command(mut w: EntityWorldMut) -> Result<()> {
+        let new_count = unsafe {
+            w.get_mut::<RefCounted>()
+            .ok_or_else(|| "not a refcounted")?
+            .dec()
         };
+        bevy::log::trace!(target: "bevy_rblx::RefCounted", "decrementing ref for {}, new count: {new_count}", w.id());
         Ok(())
     }
     pub fn protect_command(mut w: EntityWorldMut) -> Result<()> {
@@ -192,15 +196,19 @@ impl<'a> RefCountedEntityCommandsExt for EntityCommands<'a> {
     }
 }
 pub fn refcounted_check_dead(
-    mut q: Query<(Entity, &RefCounted), (Changed<RefCounted>, Allow<DisabledObject>)>,
+    mut q: Query<(Entity, &mut RefCounted), (Changed<RefCounted>, Allow<DisabledObject>)>,
     mut commands: Commands,
 ) {
     if FAST_FLAGS.fetch::<FFDisableRefCountedGC>() {
         return;
     }
-    for (e, r) in q.iter_mut() {
-        if r.should_delete() {
+    for (e, mut r) in q.iter_mut() {
+        if r.should_delete_mut() {
+            debug_assert!(r.fetch_count_mut() == 0);
+            bevy::log::trace!(target: "bevy_rblx::RefCounted", "deleting entity {e} with {} references ({:?} group refs)", r.count.load(Relaxed), r.group.as_ref().map(|x| x.inner.load(Ordering::Acquire)));
             commands.entity(e).detach_all_children().despawn();
+        } else {
+            bevy::log::trace!(target: "bevy_rblx::RefCounted", "{e} has {} references ({:?} group refs)", r.count.load(Relaxed), r.group.as_ref().map(|x| x.inner.load(Ordering::Acquire)));
         }
     }
 }

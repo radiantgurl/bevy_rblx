@@ -2,7 +2,7 @@ use parse::AttrArguments;
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote, quote_spanned};
 use syn::{
-    Error, Expr, ExprArray, Ident, ItemEnum, ItemImpl, LitStr, Path, Token, Type, parse::Parse,
+    Error, Expr, ExprArray, Ident, ItemEnum, ItemImpl, LitStr, Token, Type, parse::Parse,
     parse_macro_input, spanned::Spanned,
 };
 use utils::camel_case_to_snake_case;
