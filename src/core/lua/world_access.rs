@@ -86,19 +86,19 @@ impl WorldAccess {
     pub fn fetch_readonly<'a>(lua: &'a Lua) -> AppDataRef<'a, WorldAccess> {
         lua.app_data_ref().unwrap()
     }
-    pub(crate) unsafe fn insert_sync_access(&mut self, w: &mut World) {
+    pub(in crate::core) unsafe fn insert_sync_access(&mut self, w: &mut World) {
         self.0 = InternalWorldAccess::Synchronized {
             world: RefCell::new(take(w)),
         };
     }
-    pub(crate) unsafe fn insert_desync_access(&mut self, w: Arc<World>) {
+    pub(in crate::core) unsafe fn insert_desync_access(&mut self, w: Arc<World>) {
         self.0 = InternalWorldAccess::Desynchronized {
             commands: RefCell::new(CommandQueue::default()),
             read_only_world: w,
         }
     }
     /// Used internally before the lua ceases to exist
-    pub(crate) unsafe fn insert_desync_custom_access(
+    pub(in crate::core) unsafe fn insert_desync_custom_access(
         &mut self,
         w: Arc<World>,
         q: Arc<Mutex<CommandQueue>>,
@@ -108,7 +108,7 @@ impl WorldAccess {
             read_only_world: w,
         }
     }
-    pub(crate) fn clear_desync_access(&mut self) -> Option<CommandQueue> {
+    pub(in crate::core) fn clear_desync_access(&mut self) -> Option<CommandQueue> {
         match replace(&mut self.0, InternalWorldAccess::None) {
             InternalWorldAccess::None => {
                 panic!("Internal error: no world access while trying to clear it")
@@ -119,7 +119,7 @@ impl WorldAccess {
             _ => panic!("Internal error: invalid world access"),
         }
     }
-    pub(crate) fn clear_sync_access(&mut self, w: &mut World) {
+    pub(in crate::core) fn clear_sync_access(&mut self, w: &mut World) {
         match replace(&mut self.0, InternalWorldAccess::None) {
             InternalWorldAccess::None => {
                 panic!("Internal error: no world access while trying to clear it")

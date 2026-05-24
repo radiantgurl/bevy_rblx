@@ -29,6 +29,7 @@ pub trait EngineExtension: 'static + Send + Sync {
     fn dynamically_removable(&self) -> bool {
         false
     }
+    fn default_enabled(&self) -> bool { true }
 
     fn dyn_clone(&mut self, app: &mut App) -> Box<dyn EngineExtension>; // NOTE: This is only done when an integrated server is requested,
 

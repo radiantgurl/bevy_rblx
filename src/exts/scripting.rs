@@ -1,14 +1,17 @@
 use bevy::ecs::entity::Entity;
 use bevy::ecs::query::With;
+use bevy::ecs::resource::Resource;
 use bevy::platform::collections::HashMap;
 use bevy_rblx_derive::{fast_flag, register, register_class};
 use mlua::prelude::*;
 
+use crate::core::extension::EngineExtensionInitLevel;
 use crate::core::lua::{FFLuauForceJit, LuaSingleton};
 use crate::core::object::{Instance, ObjectHeader, RootInstance};
 use crate::core::{FAST_FLAGS, object::InstanceMembers};
 use crate::enums::RunContext;
 use crate::instance::WorkspaceMembers;
+use crate::internal::EngineExtension;
 use crate::internal_prelude::*;
 
 use crate::core::WorldAccess;
@@ -54,28 +57,10 @@ fn create_lua_function(
     if source.starts_with("--!native") && !FAST_FLAGS.fetch::<FFLuauDisableNativeFlag>() {
         lua.enable_jit(true);
     }
-    // let (game_root, workspace) = {
-    //     let wa = WorldAccess::fetch_readonly(lua);
-    //     let world = wa.access_read_only();
-    //     (
-    //         world
-    //             .try_query_filtered::<Entity, With<RootInstance>>()
-    //             .expect("failed to create game root query :(")
-    //             .single(&*world)
-    //             .unwrap(),
-    //         world
-    //             .try_query_filtered::<Entity, With<WorkspaceMembers>>()
-    //             .expect("failed to create game workspace query :(")
-    //             .single(&*world)
-    //             .unwrap(),
-    //     )
-    // };
     let env = lua.create_table()?;
     lua.globals()
         .for_each(|k: LuaValue, v: LuaValue| env.raw_set(k, v))
         .unwrap();
-    // env.raw_set("game", ObjectRef::new(lua, game_root))?;
-    // env.raw_set("workspace", ObjectRef::new(lua, workspace))?;
     env.raw_set("script", ObjectRef::new(lua, script))?;
     env.set_safeenv(true);
     path.insert(0, '@');
@@ -175,6 +160,13 @@ fn set_enabled(lua: &Lua, this: Entity, new_value: bool) -> LuaResult<bool> {
 }
 
 register_class! {
+    #[post_init=fn(lua:&Lua, _this: Entity) -> LuaResult<()> {
+        if !WorldAccess::fetch_readonly(lua).access_read_only().contains_resource::<ScriptingLoaded>() {
+            Err(LuaError::runtime("Scripting module is not loaded."))
+        } else {
+            Ok(())
+        }
+    }]
     abstract BaseScript (LuaSourceContainer)
     members {
         #[setter=fn(lua: &Lua, this: Entity, _vtable: &'static ObjectVTable, value: LuaValue) -> LuaResult<bool> {
@@ -196,4 +188,43 @@ register_class! {
         pub run_context: RunContext
     }
     methods {}
+}
+
+#[derive(Default, Resource)]
+struct ScriptingLoaded;
+
+#[derive(Default, Clone)]
+struct ScriptingExt;
+#[register]
+impl EngineExtension for ScriptingExt {
+    fn id(&self) -> &'static str {
+        "scripting"
+    }
+
+    fn init_level(&self) -> EngineExtensionInitLevel {
+        EngineExtensionInitLevel::Runtime
+    }
+
+    fn dyn_clone(&mut self, _app: &mut bevy::app::App) -> Box<dyn EngineExtension> {
+        Box::new(Self)
+    }
+    
+    fn name(&self) -> &'static str {
+        "Scripting"
+    }
+    
+    fn description(&self) -> Option<&'static str> {
+        Some("Adds LuaSourceContainer derived classes")
+    }
+
+    fn runtime_init(&self, world: &mut bevy::ecs::world::World) {
+        world.insert_resource(ScriptingLoaded);
+    }
+    
+    fn post_shutdown_hook(&self, world: &mut bevy::ecs::world::World) {
+        let entities = world.query_filtered::<Entity, With<BaseScriptMembers>>().iter(world).collect::<Vec<_>>();
+        for e in entities {
+            world.entity_mut(e).remove::<BaseScriptMembers>();
+        }
+    }
 }

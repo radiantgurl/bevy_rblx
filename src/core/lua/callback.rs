@@ -41,14 +41,21 @@ impl LuaCallback {
     }
 }
 
-#[derive(Default)]
-pub struct LuaCallbackTable<const ERASE_ON_CLONE: bool = false> {
-    callbacks: HashMap<usize, (WeakLua, HashMap<i32, LuaRegistryKey>)>,
+pub struct LuaCallbackTable<const ERASE_ON_CLONE: bool, T> {
+    callbacks: HashMap<usize, (WeakLua, HashMap<i32, (LuaRegistryKey, T)>)>,
     ids: HashMap<usize, (usize, i32)>,
     id_counter: usize,
 }
 
-impl<const ERASE_ON_CLONE: bool> Clone for LuaCallbackTable<ERASE_ON_CLONE> {
+impl<const ERASE_ON_CLONE: bool, T> Default for LuaCallbackTable<ERASE_ON_CLONE, T> {
+    fn default() -> Self {
+        Self { callbacks: Default::default(), ids: Default::default(), id_counter: Default::default() }
+    }
+}
+
+impl<const ERASE_ON_CLONE: bool, T> Clone for LuaCallbackTable<ERASE_ON_CLONE, T> 
+    where T: Clone
+{
     fn clone(&self) -> Self {
         if ERASE_ON_CLONE {
             Self::default()
@@ -57,11 +64,11 @@ impl<const ERASE_ON_CLONE: bool> Clone for LuaCallbackTable<ERASE_ON_CLONE> {
             for (ptr, (weak_lua, keys)) in self.callbacks.iter() {
                 if let Some(lua) = weak_lua.try_upgrade() {
                     let mut v = HashMap::default();
-                    for (key, i) in keys {
+                    for (key, (i, meta)) in keys {
                         v.insert(
                             *key,
-                            lua.create_registry_value(lua.registry_value::<LuaValue>(i).unwrap())
-                                .unwrap(),
+                            (lua.create_registry_value(lua.registry_value::<LuaValue>(i).unwrap())
+                                .unwrap(), meta.clone()),
                         );
                     }
                     new_table.insert(*ptr, (weak_lua.clone(), v));
@@ -87,8 +94,8 @@ impl<const ERASE_ON_CLONE: bool> Clone for LuaCallbackTable<ERASE_ON_CLONE> {
     }
 }
 
-impl<const ERASE_ON_CLONE: bool> LuaCallbackTable<ERASE_ON_CLONE> {
-    pub fn insert(&mut self, lua: &Lua, function: LuaFunction) -> LuaResult<usize> {
+impl<const ERASE_ON_CLONE: bool, T: Clone> LuaCallbackTable<ERASE_ON_CLONE, T> {
+    pub fn insert(&mut self, lua: &Lua, function: LuaFunction, metadata: T) -> LuaResult<usize> {
         let ptr_hash = lua.to_pointer() as usize;
         let registry_key = lua.create_registry_value(function)?;
         let id = self.id_counter;
@@ -98,12 +105,12 @@ impl<const ERASE_ON_CLONE: bool> LuaCallbackTable<ERASE_ON_CLONE> {
             .entry(ptr_hash)
             .or_insert_with(|| (lua.weak(), HashMap::default()))
             .1
-            .insert(registry_key.id(), registry_key);
+            .insert(registry_key.id(), (registry_key, metadata));
         Ok(id)
     }
-    pub fn try_insert(&mut self, callback: &LuaCallback) -> LuaResult<Option<usize>> {
+    pub fn try_insert(&mut self, callback: &LuaCallback, metadata: T) -> LuaResult<Option<usize>> {
         if let Some((lua, func)) = callback.as_function()? {
-            Ok(Some(self.insert(&lua, func)?))
+            Ok(Some(self.insert(&lua, func, metadata)?))
         } else {
             Ok(None)
         }
@@ -114,16 +121,17 @@ impl<const ERASE_ON_CLONE: bool> LuaCallbackTable<ERASE_ON_CLONE> {
             self.ids.remove(&id);
         }
     }
-    pub fn try_get_callback(&self, id: usize) -> LuaResult<Option<LuaCallback>> {
+    pub fn try_get_callback(&self, id: usize) -> LuaResult<Option<(LuaCallback, T)>> {
         if let Some((lua_id, reg)) = self.ids.get(&id).copied() {
             let (weak_lua, entries) = self.callbacks.get(&lua_id).unwrap();
             if let Some(lua) = weak_lua.try_upgrade() {
-                Ok(Some(LuaCallback {
+                let (key, meta) = entries.get(&reg).unwrap();
+                Ok(Some((LuaCallback {
                     weak_lua: weak_lua.clone(),
                     registry_key: lua.create_registry_value(
-                        lua.registry_value::<LuaValue>(entries.get(&reg).unwrap())?,
+                        lua.registry_value::<LuaValue>(key)?,
                     )?,
-                }))
+                }, meta.clone())))
             } else {
                 Ok(None)
             }
@@ -131,7 +139,7 @@ impl<const ERASE_ON_CLONE: bool> LuaCallbackTable<ERASE_ON_CLONE> {
             Ok(None)
         }
     }
-    pub fn get_callbacks(&self) -> Vec<(Lua, Vec<LuaFunction>)> {
+    pub fn get_callbacks(&self) -> Vec<(Lua, Vec<(LuaFunction, T)>)> {
         self.callbacks
             .values()
             .filter_map(|(w, vals)| w.try_upgrade().map(|l| (l, vals)))
@@ -139,7 +147,7 @@ impl<const ERASE_ON_CLONE: bool> LuaCallbackTable<ERASE_ON_CLONE> {
                 (
                     lua.clone(),
                     keys.values()
-                        .map(|reg| lua.registry_value::<LuaFunction>(reg).unwrap())
+                        .map(|(reg, meta)| (lua.registry_value::<LuaFunction>(reg).unwrap(), meta.clone()))
                         .collect(),
                 )
             })
@@ -159,15 +167,20 @@ impl<const ERASE_ON_CLONE: bool> LuaCallbackTable<ERASE_ON_CLONE> {
     }
 }
 
-#[derive(Default)]
-pub struct LuaPrioCallbackTable<const ERASE_ON_CLONE: bool = false> {
-    callbacks: HashMap<usize, (WeakLua, HashMap<i32, LuaRegistryKey>)>,
+pub struct LuaPrioCallbackTable<const ERASE_ON_CLONE: bool, T> {
+    callbacks: HashMap<usize, (WeakLua, HashMap<i32, (LuaRegistryKey, T)>)>,
     ids: HashMap<usize, (usize, i32, i64)>,
     id_counter: usize,
     priority_table: BTreeMap<i64, HashSet<usize>>,
 }
 
-impl<const ERASE_ON_CLONE: bool> Clone for LuaPrioCallbackTable<ERASE_ON_CLONE> {
+impl<const ERASE_ON_CLONE: bool, T> Default for LuaPrioCallbackTable<ERASE_ON_CLONE, T> {
+    fn default() -> Self {
+        Self { callbacks: Default::default(), ids: Default::default(), id_counter: Default::default(), priority_table: Default::default() }
+    }
+}
+
+impl<const ERASE_ON_CLONE: bool, T: Clone> Clone for LuaPrioCallbackTable<ERASE_ON_CLONE, T> {
     fn clone(&self) -> Self {
         if ERASE_ON_CLONE {
             Self::default()
@@ -176,11 +189,11 @@ impl<const ERASE_ON_CLONE: bool> Clone for LuaPrioCallbackTable<ERASE_ON_CLONE> 
             for (ptr, (weak_lua, keys)) in self.callbacks.iter() {
                 if let Some(lua) = weak_lua.try_upgrade() {
                     let mut v = HashMap::default();
-                    for (key, i) in keys {
+                    for (key, (i, meta)) in keys {
                         v.insert(
                             *key,
-                            lua.create_registry_value(lua.registry_value::<LuaValue>(i).unwrap())
-                                .unwrap(),
+                            (lua.create_registry_value(lua.registry_value::<LuaValue>(i).unwrap())
+                                .unwrap(), meta.clone()),
                         );
                     }
                     new_table.insert(*ptr, (weak_lua.clone(), v));
@@ -226,8 +239,8 @@ impl<const ERASE_ON_CLONE: bool> Clone for LuaPrioCallbackTable<ERASE_ON_CLONE> 
     }
 }
 
-impl<const ERASE_ON_CLONE: bool> LuaPrioCallbackTable<ERASE_ON_CLONE> {
-    pub fn insert(&mut self, lua: &Lua, priority: i64, function: LuaFunction) -> LuaResult<usize> {
+impl<const ERASE_ON_CLONE: bool, T: Clone> LuaPrioCallbackTable<ERASE_ON_CLONE, T> {
+    pub fn insert(&mut self, lua: &Lua, priority: i64, function: LuaFunction, metadata: T) -> LuaResult<usize> {
         let ptr_hash = lua.to_pointer() as usize;
         let registry_key = lua.create_registry_value(function)?;
         let id = self.id_counter;
@@ -237,7 +250,7 @@ impl<const ERASE_ON_CLONE: bool> LuaPrioCallbackTable<ERASE_ON_CLONE> {
             .entry(ptr_hash)
             .or_insert_with(|| (lua.weak(), HashMap::default()))
             .1
-            .insert(registry_key.id(), registry_key);
+            .insert(registry_key.id(), (registry_key, metadata));
         self.priority_table.entry(priority).or_default().insert(id);
         Ok(id)
     }
@@ -245,9 +258,10 @@ impl<const ERASE_ON_CLONE: bool> LuaPrioCallbackTable<ERASE_ON_CLONE> {
         &mut self,
         priority: i64,
         callback: &LuaCallback,
+        metadata: T
     ) -> LuaResult<Option<usize>> {
         if let Some((lua, func)) = callback.as_function()? {
-            let id = self.insert(&lua, priority, func)?;
+            let id = self.insert(&lua, priority, func, metadata)?;
             self.priority_table.entry(priority).or_default().insert(id);
             Ok(Some(id))
         } else {
@@ -267,16 +281,17 @@ impl<const ERASE_ON_CLONE: bool> LuaPrioCallbackTable<ERASE_ON_CLONE> {
             }
         }
     }
-    pub fn try_get_callback(&self, id: usize) -> LuaResult<Option<LuaCallback>> {
+    pub fn try_get_callback(&self, id: usize) -> LuaResult<Option<(LuaCallback, T)>> {
         if let Some((lua_id, reg, _)) = self.ids.get(&id).copied() {
             let (weak_lua, entries) = self.callbacks.get(&lua_id).unwrap();
             if let Some(lua) = weak_lua.try_upgrade() {
-                Ok(Some(LuaCallback {
+                let (reg, metadata) = entries.get(&reg).unwrap();
+                Ok(Some((LuaCallback {
                     weak_lua: weak_lua.clone(),
                     registry_key: lua.create_registry_value(
-                        lua.registry_value::<LuaValue>(entries.get(&reg).unwrap())?,
+                        lua.registry_value::<LuaValue>(reg)?,
                     )?,
-                }))
+                }, metadata.clone())))
             } else {
                 Ok(None)
             }
@@ -284,8 +299,8 @@ impl<const ERASE_ON_CLONE: bool> LuaPrioCallbackTable<ERASE_ON_CLONE> {
             Ok(None)
         }
     }
-    pub fn get_callbacks(&self) -> Vec<(Lua, LuaFunction)> {
-        let h: HashMap<usize, (Lua, HashMap<i32, LuaFunction>)> = self
+    pub fn get_callbacks(&self) -> Vec<(Lua, LuaFunction, T)> {
+        let h: HashMap<usize, (Lua, HashMap<i32, (LuaFunction, T)>)> = self
             .callbacks
             .iter()
             .filter_map(|(id, (w, vals))| w.try_upgrade().map(|l| (id, l, vals)))
@@ -295,8 +310,8 @@ impl<const ERASE_ON_CLONE: bool> LuaPrioCallbackTable<ERASE_ON_CLONE> {
                     (
                         lua.clone(),
                         keys.iter()
-                            .map(|(rid, reg)| {
-                                (*rid, lua.registry_value::<LuaFunction>(reg).unwrap())
+                            .map(|(rid, (reg, metadata))| {
+                                (*rid, (lua.registry_value::<LuaFunction>(reg).unwrap(), metadata.clone()))
                             })
                             .collect(),
                     ),
@@ -310,7 +325,8 @@ impl<const ERASE_ON_CLONE: bool> LuaPrioCallbackTable<ERASE_ON_CLONE> {
             .map(|id| self.ids.get(id).unwrap())
             .filter_map(|(ptr_hash, reg, _)| {
                 if let Some((lua, funcs)) = h.get(ptr_hash) {
-                    Some((lua.clone(), funcs.get(reg).unwrap().clone()))
+                    let (f, metadata) = funcs.get(reg).unwrap().clone();
+                    Some((lua.clone(), f, metadata))
                 } else {
                     None
                 }
@@ -336,14 +352,20 @@ impl<const ERASE_ON_CLONE: bool> LuaPrioCallbackTable<ERASE_ON_CLONE> {
     }
 }
 
-#[derive(Default, Deref)]
-pub struct LuaPrioCallbackTableCached<const ERASE_ON_CLONE: bool = false> {
+#[derive(Deref)]
+pub struct LuaPrioCallbackTableCached<const ERASE_ON_CLONE: bool, T> {
     #[deref]
-    callbacks: LuaPrioCallbackTable<ERASE_ON_CLONE>,
-    cached: Option<Vec<(Lua, LuaFunction)>>,
+    callbacks: LuaPrioCallbackTable<ERASE_ON_CLONE, T>,
+    cached: Option<Vec<(Lua, LuaFunction, T)>>,
 }
 
-impl<const ERASE_ON_CLONE: bool> Clone for LuaPrioCallbackTableCached<ERASE_ON_CLONE> {
+impl<const ERASE_ON_CLONE: bool, T> Default for LuaPrioCallbackTableCached<ERASE_ON_CLONE, T> {
+    fn default() -> Self {
+        Self { callbacks: Default::default(), cached: None }
+    }
+}
+
+impl<const ERASE_ON_CLONE: bool, T: Clone> Clone for LuaPrioCallbackTableCached<ERASE_ON_CLONE, T> {
     fn clone(&self) -> Self {
         Self {
             callbacks: self.callbacks.clone(),
@@ -352,15 +374,15 @@ impl<const ERASE_ON_CLONE: bool> Clone for LuaPrioCallbackTableCached<ERASE_ON_C
     }
 }
 
-impl<const ERASE_ON_CLONE: bool> DerefMut for LuaPrioCallbackTableCached<ERASE_ON_CLONE> {
+impl<const ERASE_ON_CLONE: bool, T> DerefMut for LuaPrioCallbackTableCached<ERASE_ON_CLONE, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.cached = None;
         &mut self.callbacks
     }
 }
 
-impl<const ERASE_ON_CLONE: bool> LuaPrioCallbackTableCached<ERASE_ON_CLONE> {
-    pub fn get_callbacks_cached(&mut self) -> Vec<(Lua, LuaFunction)> {
+impl<const ERASE_ON_CLONE: bool, T: Clone> LuaPrioCallbackTableCached<ERASE_ON_CLONE, T> {
+    pub fn get_callbacks_cached(&mut self) -> Vec<(Lua, LuaFunction, T)> {
         if let Some(r) = self.cached.as_ref() {
             r.clone()
         } else {
@@ -371,4 +393,6 @@ impl<const ERASE_ON_CLONE: bool> LuaPrioCallbackTableCached<ERASE_ON_CLONE> {
     }
 }
 
-impl<const ERASE_ON_CLONE: bool> LuaSend for LuaPrioCallbackTableCached<ERASE_ON_CLONE> {}
+impl<const ERASE_ON_CLONE: bool, T: LuaSend> LuaSend for LuaPrioCallbackTableCached<ERASE_ON_CLONE, T> {}
+impl<const ERASE_ON_CLONE: bool, T: LuaSend> LuaSend for LuaPrioCallbackTable<ERASE_ON_CLONE, T> {}
+impl<const ERASE_ON_CLONE: bool, T: LuaSend> LuaSend for LuaCallbackTable<ERASE_ON_CLONE, T> {}

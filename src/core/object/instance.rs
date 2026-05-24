@@ -130,7 +130,7 @@ pub fn remove_parent(lua: &Lua, this: Entity, new_parent: Option<Entity>) -> Lua
         let mut wa = WorldAccess::fetch(lua);
         let world = wa.access_synchronized()?;
         let parent = world.get::<ChildOf>(this).unwrap().0;
-        world.entity_mut(parent).remove::<ChildOf>();
+        world.entity_mut(parent).detach_child(this);
 
         let mut descendants_qs = world.query_filtered::<&Children, Allow<DisabledObject>>();
         let descendants = descendants_qs.query(world);
