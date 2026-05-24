@@ -1,5 +1,12 @@
 use crate::{
-    core::{FAST_FLAGS, lua::{ThreadIdentityType, singleton::{LuaSingleton, init_singletons}}, object::{ObjectHeader, DisabledObject}},
+    core::{
+        FAST_FLAGS,
+        lua::{
+            ThreadIdentityType,
+            singleton::{LuaSingleton, init_singletons},
+        },
+        object::{DisabledObject, ObjectHeader},
+    },
     internal_prelude::*,
 };
 

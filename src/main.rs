@@ -4,6 +4,7 @@
 
 pub mod core;
 pub mod enums;
+pub mod exts;
 pub mod instance;
 pub mod userdata;
 
@@ -14,11 +15,12 @@ pub mod internal {
     pub use crate::core::SecurityContext;
     pub use crate::core::ThreadIdentity;
     pub use crate::core::WorldAccess;
+    pub use crate::core::extension::{EngineExtension, EngineExtensionHook};
     pub use crate::core::fastflags::{FastFlagKeyInsert, FastFlagKeyInserter};
     pub use crate::core::lua::CachedLuaFunction;
     pub use crate::core::object::{
-        OBJECT_VTABLES, ObjectHeader,
-        ObjectVTable, object::{ObjectMethodInfo, ObjectNewFn, ObjectPropertyInfo, ObjectVTableCreationPointer}
+        OBJECT_VTABLES, ObjectHeader, ObjectVTable,
+        object::{ObjectMethodInfo, ObjectNewFn, ObjectPropertyInfo, ObjectVTableCreationPointer},
     };
 
     pub use bevy::ecs::entity::Entity;

@@ -1,12 +1,14 @@
 use std::{mem::take, sync::LazyLock};
 
 use crate::{
-    core::{SecurityContext, ThreadIdentity, WorldAccess, bevy::RefCounted, lua::CachedLuaFunction},
+    core::{
+        SecurityContext, ThreadIdentity, WorldAccess, bevy::RefCounted, lua::CachedLuaFunction,
+    },
     userdata::{LuaFreeValue, ObjectRef, RBXScriptSignal},
 };
+use bevy::{platform::collections::HashMap, prelude::*};
 use lazy_static::lazy_static;
 use mlua::prelude::*;
-use bevy::{platform::collections::HashMap, prelude::*};
 
 #[derive(Component, Clone, Debug)]
 #[require(RefCounted)]
@@ -101,7 +103,11 @@ impl ObjectPropertyInfo {
                     property_changed_signal = None;
                 }
             }
-            res = changed.fire_in_lua(lua, self.property_name == "Parent" || self.property_name == "parent", self.property_name);
+            res = changed.fire_in_lua(
+                lua,
+                self.property_name == "Parent" || self.property_name == "parent",
+                self.property_name,
+            );
             if let Some(property_changed) = property_changed_signal {
                 res = res.and(property_changed.fire_in_lua(
                     lua,

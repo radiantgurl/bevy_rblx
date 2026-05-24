@@ -2,7 +2,13 @@ use bevy::ecs::{entity::Entity, query::With};
 use bevy_rblx_derive::register_class;
 use mlua::prelude::*;
 
-use crate::{core::{lua::WorldAccess, object::{Instance, InstanceMembers, RootInstance}}, internal_prelude::*};
+use crate::{
+    core::{
+        lua::WorldAccess,
+        object::{Instance, InstanceMembers, RootInstance},
+    },
+    internal_prelude::*,
+};
 
 register_class! {
     #[post_init=fn(lua: &Lua, this: Entity) -> LuaResult<()> {

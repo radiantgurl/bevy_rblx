@@ -1,4 +1,4 @@
-use crate::core::lua::{system_time, LuaSingleton, WorldAccess};
+use crate::core::lua::{LuaSingleton, WorldAccess, system_time};
 use crate::core::object::ServiceMembers;
 use crate::enums::MessageType;
 use crate::internal_prelude::*;

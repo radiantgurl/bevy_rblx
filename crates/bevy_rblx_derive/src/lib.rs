@@ -1,8 +1,8 @@
 use parse::AttrArguments;
 use proc_macro2::{Span, TokenStream};
-use quote::{quote, quote_spanned};
+use quote::{ToTokens, quote, quote_spanned};
 use syn::{
-    Error, Expr, ExprArray, Ident, ItemEnum, ItemImpl, LitStr, Token, Type, parse::Parse,
+    Error, Expr, ExprArray, Ident, ItemEnum, ItemImpl, LitStr, Path, Token, Type, parse::Parse,
     parse_macro_input, spanned::Spanned,
 };
 use utils::camel_case_to_snake_case;
@@ -340,17 +340,39 @@ pub fn register(
     let impl_block = parse_macro_input!(ts as ItemImpl);
     let name = &impl_block.self_ty;
     if impl_block.trait_.is_none() {
-        return Error::new_spanned(impl_block, "expected LuaSingleton impl block")
+        return Error::new_spanned(impl_block, "expected trait impl block")
             .into_compile_error()
             .into();
     }
-    quote! {
-        #impl_block
-        bevy_rblx::internal::inventory::submit!(
-            bevy_rblx::internal::SingletonRegisterFn(#name::register_singleton)
-        );
-    }
-    .into()
+    let quoted = match &impl_block.trait_.as_ref().unwrap().1 {
+        x if x.is_ident("LuaSingleton") => {
+            quote! {
+                #impl_block
+                bevy_rblx::internal::inventory::submit!(
+                    bevy_rblx::internal::SingletonRegisterFn(#name::register_singleton)
+                );
+            }
+        }
+        x if x.is_ident("EngineExtension") => {
+            quote! {
+                #impl_block
+                const _: () = {
+                    fn engine_extension_create_hook() -> Box<dyn bevy_rblx::internal::EngineExtension> {
+                        Box::new(<#name as ::std::default::Default>::default())
+                    }
+                    bevy_rblx::internal::inventory::submit!(
+                        bevy_rblx::internal::EngineExtensionHook(engine_extension_create_hook)
+                    );
+                };
+            }
+        }
+        x => Error::new_spanned(
+            x,
+            format!("unknown register type {}", x.to_token_stream().to_string()),
+        )
+        .into_compile_error(),
+    };
+    quoted.into()
 }
 
 struct FastFlagArgs {

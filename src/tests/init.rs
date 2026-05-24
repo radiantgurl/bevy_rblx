@@ -3,7 +3,10 @@ use bevy::{
     ecs::{entity::Entity, hierarchy::ChildOf, query::With, world::World},
 };
 
-use crate::core::{Engine, LuauContainer, object::{RootInstance, RunServiceMembers}};
+use crate::core::{
+    Engine, LuauContainer,
+    object::{RootInstance, RunServiceMembers},
+};
 
 #[test]
 pub fn server_initialization_stability() {

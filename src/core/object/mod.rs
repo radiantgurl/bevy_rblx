@@ -5,10 +5,13 @@ pub mod object;
 pub use object::{DisabledObject, OBJECT_VTABLES, ObjectHeader, ObjectVTable};
 
 pub mod data_model;
-pub use data_model::{FFGameCreatorId, FFGameCreatorType, FFGameId, FFGameName, FFJobId, FFPlaceId, FFPlaceVersion, FFPrivateServerId, FFPrivateServerOwnerId, RootInstance};
+pub use data_model::{
+    FFGameCreatorId, FFGameCreatorType, FFGameId, FFGameName, FFJobId, FFPlaceId, FFPlaceVersion,
+    FFPrivateServerId, FFPrivateServerOwnerId, RootInstance,
+};
 
 pub(crate) mod instance;
-pub use instance::{InstanceMembers, NewInstanceEvent, Instance};
+pub use instance::{Instance, InstanceMembers, NewInstanceEvent};
 
 pub mod run_service;
 pub use run_service::{FFIsEdit, FFIsRunMode, FFIsStudio, RunServiceMembers};

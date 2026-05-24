@@ -1,5 +1,12 @@
-use crate::{core::{lua::{LuaSingleton, FFLuauForceJit}, WorldAccess, object::ObjectHeader, FAST_FLAGS}, internal_prelude::*};
 use crate::userdata::ObjectRef;
+use crate::{
+    core::{
+        FAST_FLAGS, WorldAccess,
+        lua::{FFLuauForceJit, LuaSingleton},
+        object::ObjectHeader,
+    },
+    internal_prelude::*,
+};
 use bevy_rblx_derive::register;
 use mlua::prelude::*;
 

@@ -1,9 +1,20 @@
 use crate::{
-    core::{FAST_FLAGS, ShutdownReason, lua::{LuauContainer, WorldAccess}, object::{DisabledObject, InstanceMembers, service_provider::{ServiceProvider, ServiceProviderMembers}}}, enums::{CloseReason, CreatorType}, internal_prelude::*, userdata::ObjectRef
+    core::{
+        FAST_FLAGS, ShutdownReason,
+        lua::{LuauContainer, WorldAccess},
+        object::{
+            DisabledObject, InstanceMembers,
+            service_provider::{ServiceProvider, ServiceProviderMembers},
+        },
+    },
+    enums::{CloseReason, CreatorType},
+    instance::WorkspaceMembers,
+    internal_prelude::*,
+    userdata::ObjectRef,
 };
 use bevy::prelude::*;
-use mlua::prelude::*;
 use bevy_rblx_derive::{fast_flag, register_class};
+use mlua::prelude::*;
 
 #[derive(Clone, Copy, Component, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct RootInstance;
@@ -91,9 +102,13 @@ register_class! {
     }
 }
 
-pub fn register_game_global(w: &mut World) {
+pub fn register_game_and_workspace_global(w: &mut World) {
     let game = w
         .query_filtered::<Entity, With<RootInstance>>()
+        .single(w)
+        .unwrap();
+    let workspace = w
+        .query_filtered::<Entity, With<WorkspaceMembers>>()
         .single(w)
         .unwrap();
     let containers = w
@@ -106,6 +121,9 @@ pub fn register_game_global(w: &mut World) {
             WorldAccess::fetch(&lua).insert_sync_access(w);
             lua.globals()
                 .raw_set("game", ObjectRef::new(&lua, game))
+                .unwrap();
+            lua.globals()
+                .raw_set("workspace", ObjectRef::new(&lua, workspace))
                 .unwrap();
         }
         WorldAccess::fetch(&lua).clear_sync_access(w)

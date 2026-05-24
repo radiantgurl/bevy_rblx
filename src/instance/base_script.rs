@@ -5,7 +5,7 @@ use bevy_rblx_derive::{fast_flag, register, register_class};
 use mlua::prelude::*;
 
 use crate::core::lua::{FFLuauForceJit, LuaSingleton};
-use crate::core::object::{Instance, RootInstance, ObjectHeader};
+use crate::core::object::{Instance, ObjectHeader, RootInstance};
 use crate::core::{FAST_FLAGS, object::InstanceMembers};
 use crate::enums::RunContext;
 use crate::instance::WorkspaceMembers;
@@ -54,28 +54,28 @@ fn create_lua_function(
     if source.starts_with("--!native") && !FAST_FLAGS.fetch::<FFLuauDisableNativeFlag>() {
         lua.enable_jit(true);
     }
-    let (game_root, workspace) = {
-        let wa = WorldAccess::fetch_readonly(lua);
-        let world = wa.access_read_only();
-        (
-            world
-                .try_query_filtered::<Entity, With<RootInstance>>()
-                .expect("failed to create game root query :(")
-                .single(&*world)
-                .unwrap(),
-            world
-                .try_query_filtered::<Entity, With<WorkspaceMembers>>()
-                .expect("failed to create game workspace query :(")
-                .single(&*world)
-                .unwrap(),
-        )
-    };
+    // let (game_root, workspace) = {
+    //     let wa = WorldAccess::fetch_readonly(lua);
+    //     let world = wa.access_read_only();
+    //     (
+    //         world
+    //             .try_query_filtered::<Entity, With<RootInstance>>()
+    //             .expect("failed to create game root query :(")
+    //             .single(&*world)
+    //             .unwrap(),
+    //         world
+    //             .try_query_filtered::<Entity, With<WorkspaceMembers>>()
+    //             .expect("failed to create game workspace query :(")
+    //             .single(&*world)
+    //             .unwrap(),
+    //     )
+    // };
     let env = lua.create_table()?;
     lua.globals()
         .for_each(|k: LuaValue, v: LuaValue| env.raw_set(k, v))
         .unwrap();
-    env.raw_set("game", ObjectRef::new(lua, game_root))?;
-    env.raw_set("workspace", ObjectRef::new(lua, workspace))?;
+    // env.raw_set("game", ObjectRef::new(lua, game_root))?;
+    // env.raw_set("workspace", ObjectRef::new(lua, workspace))?;
     env.raw_set("script", ObjectRef::new(lua, script))?;
     env.set_safeenv(true);
     path.insert(0, '@');

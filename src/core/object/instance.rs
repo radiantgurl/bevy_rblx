@@ -5,7 +5,17 @@ use crate::core::object::{DisabledObject, RootInstance};
 use crate::core::{ContainerProvenance, push_log};
 use crate::enums::MessageType;
 use crate::userdata::{LuaFreeValue, RBXScriptSignal};
-use crate::{core::{WorldAccess, object::{object::{ObjectVTableCreationPointer, ObjectNewFn,}, ObjectHeader}}, internal_prelude::*, userdata::ObjectRef};
+use crate::{
+    core::{
+        WorldAccess,
+        object::{
+            ObjectHeader,
+            object::{ObjectNewFn, ObjectVTableCreationPointer},
+        },
+    },
+    internal_prelude::*,
+    userdata::ObjectRef,
+};
 use bevy::ecs::entity::{EntityCloner, EntityHashMap};
 use bevy::prelude::*;
 
@@ -164,6 +174,9 @@ pub fn add_parent(lua: &Lua, this: Entity, new_parent: Entity) -> LuaResult<()> 
         }
     }
 
+    for ev in events {
+        ev.fire_in_lua(lua, true, ObjectRef::new(lua, this))?;
+    }
     Ok(())
 }
 

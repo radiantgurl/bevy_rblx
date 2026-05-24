@@ -1,9 +1,15 @@
-use crate::{core::{WorldAccess, lua::LuaSingleton, object::{instance::INSTANCE_CONSTRUCTOR, OBJECT_VTABLES}}, userdata::ObjectRef};
-use bevy::prelude::*;
-use mlua::prelude::*;
 use crate::internal_prelude::*;
+use crate::{
+    core::{
+        WorldAccess,
+        lua::LuaSingleton,
+        object::{OBJECT_VTABLES, instance::INSTANCE_CONSTRUCTOR},
+    },
+    userdata::ObjectRef,
+};
+use bevy::prelude::*;
 use bevy_rblx_derive::register;
-
+use mlua::prelude::*;
 
 pub fn instance_protected_new(
     lua: &Lua,

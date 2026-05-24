@@ -1,8 +1,8 @@
 use bevy_rblx_derive::register;
 use mlua::prelude::*;
 
-use crate::internal_prelude::*;
 use crate::core::lua::LuaSingleton;
+use crate::internal_prelude::*;
 
 #[derive(Clone, Copy, PartialEq, Default, Debug, FromLua)]
 pub struct Color3 {
@@ -121,7 +121,9 @@ impl LuaUserData for Color3 {
         methods.add_method("Lerp", |_, a, (b, t): (Color3, f32)| Ok(a.lerp(b, t)));
         methods.add_method("ToHex", |_, color, ()| Ok(color.to_hex()));
         methods.add_method("ToHSV", |_, color, ()| Ok(color.to_hsv()));
-        methods.add_meta_method("__tostring", |_, color, ()| Ok(format!("Color3({}, {}, {})",color.r,color.g,color.b)))
+        methods.add_meta_method("__tostring", |_, color, ()| {
+            Ok(format!("Color3({}, {}, {})", color.r, color.g, color.b))
+        })
     }
 }
 

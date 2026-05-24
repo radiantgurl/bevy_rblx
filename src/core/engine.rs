@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    io::Write,
     mem::{swap, take},
     process::exit,
     sync::{Arc, atomic::AtomicBool},
@@ -16,9 +16,16 @@ use bevy::{
     },
     camera::Camera2d,
     ecs::{
-        error::BevyError, message::MessageReader, query::Allow, resource::Resource, schedule::{IntoScheduleConfigs, Schedule}, system::{Commands, Local}, world::{CommandQueue, World}
+        error::BevyError,
+        message::MessageReader,
+        query::Allow,
+        resource::Resource,
+        schedule::{IntoScheduleConfigs, Schedule},
+        system::{Commands, Local},
+        world::{CommandQueue, World},
     },
     log::{Level, LogPlugin},
+    platform::collections::HashMap,
     tasks::{ComputeTaskPool, ParallelSlice},
     time::Time,
 };
@@ -30,13 +37,32 @@ use parking_lot::Mutex;
 
 use crate::{
     core::{
-        FAST_FLAGS, FastFlagType, LoggedMessage, LuauContainer, RblxLogs, TaskScheduler, WorldAccess, bevy::ref_counted::RefCountedPlugin, fastflags::FastFlagValue, input::{InterpreterThread, start_input_handler}, lua::{FFTaskSchedulerTimeSensitive, clock, luau::{assign_provenance, create_provenance, erase_provenance}, world_access::WorldAccessDestructor}, object::{DisabledObject, NewInstanceEvent, RunServiceMembers, data_model::register_game_global, service_provider::ServiceProviderMembers}
+        FAST_FLAGS, FastFlagType, LoggedMessage, LuauContainer, RblxLogs, TaskScheduler,
+        WorldAccess,
+        bevy::ref_counted::RefCountedPlugin,
+        extension::{
+            EngineExtension, EngineExtensionInitLevel, EngineExtensions, ext_post_core_init,
+            ext_post_shutdown, ext_pre_shutdown, ext_runtime_init,
+        },
+        fastflags::FastFlagValue,
+        lua::{
+            FFTaskSchedulerTimeSensitive, clock,
+            luau::{assign_provenance, create_provenance, erase_provenance},
+            world_access::WorldAccessDestructor,
+        },
+        object::{
+            DisabledObject, NewInstanceEvent, RunServiceMembers,
+            data_model::register_game_and_workspace_global,
+            service_provider::ServiceProviderMembers,
+        },
     },
     enums::{CloseReason, SignalBehavior},
     internal_prelude::*,
     userdata::{FFSignalBehavior, RBXScriptSignal, instance_new},
 };
 
+#[derive(Resource, Clone, Copy, Hash, Default, Debug)]
+pub struct Headless;
 pub struct Engine;
 #[derive(Resource, Clone, Copy)]
 pub struct ShutdownReason(pub CloseReason);
@@ -60,7 +86,8 @@ pub fn initialize(w: &mut World) {
             WorldAccess::fetch(&container.lua).insert_sync_access(w);
         }
 
-        root_instance = instance_new(&container.lua, "DataModel".to_owned()).unwrap()
+        root_instance = instance_new(&container.lua, "DataModel".to_owned())
+            .unwrap()
             .entity();
 
         instance_new(&container.lua, "RunService".to_owned()).unwrap();
@@ -212,8 +239,6 @@ fn bind_close_system_runner(mut app_exit: MessageReader<AppExit>, mut c: Command
 }
 
 fn cleanup_instances(w: &mut World) {
-    w.remove_resource::<InterpreterThread>();
-
     let mut containers_qs = w.query_filtered::<&mut LuauContainer, Allow<DisabledObject>>();
     let containers = containers_qs
         .iter_mut(w)
@@ -311,7 +336,13 @@ impl Engine {
             Startup,
             (
                 initialize,
-                register_game_global,
+                register_game_and_workspace_global,
+                create_provenance,
+                assign_provenance,
+                ext_post_core_init,
+                create_provenance,
+                assign_provenance,
+                ext_runtime_init,
                 create_provenance,
                 assign_provenance,
             )
@@ -341,14 +372,14 @@ impl Engine {
         app.add_systems(
             Update,
             (
-                register_game_global,
+                register_game_and_workspace_global,
                 (
                     runservice_event_post_simulation,
                     dispatch_synchronized,
                     dispatch_desynchronized,
                     create_provenance,
                     assign_provenance,
-                    run_synchronized.after(register_game_global),
+                    run_synchronized.after(register_game_and_workspace_global),
                     run_desynchronized,
                     create_provenance,
                     assign_provenance,
@@ -375,6 +406,7 @@ impl Engine {
 
     pub fn headless() -> App {
         let mut app = App::new();
+        app.world_mut().insert_resource(Headless);
 
         app.add_plugins(MinimalPlugins.build().add(LogPlugin {
             level: if DEBUG_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
@@ -404,13 +436,11 @@ impl Engine {
         app.add_plugins(EguiPlugin::default());
         if cfg!(debug_assertions) {
             app.add_plugins(WorldInspectorPlugin::default());
-            app.world_mut().spawn(Camera2d);
         } else {
             app.world_mut()
                 .add_schedule(Schedule::new(EguiPrimaryContextPass));
-            app.world_mut().spawn(Camera2d);
         }
-        app.add_systems(PostStartup, start_input_handler);
+        app.world_mut().spawn(Camera2d);
 
         Self::additional(&mut app);
 
@@ -445,6 +475,7 @@ impl Engine {
         };
 
         let mut app = App::new();
+        app.world_mut().insert_resource(Headless);
         FAST_FLAGS.store::<FFTaskSchedulerDisableWatchdog>(true);
 
         app.add_plugins(
@@ -452,15 +483,14 @@ impl Engine {
                 .set(ScheduleRunnerPlugin {
                     run_mode: RunMode::Loop { wait: None },
                 })
-                .build()
-                .add(LogPlugin {
-                    level: if cfg!(debug_assertions) {
-                        Level::DEBUG
-                    } else {
-                        Level::INFO
-                    },
-                    ..Default::default()
-                }),
+                .build(), // .add(LogPlugin {
+                          //     level: if cfg!(debug_assertions) {
+                          //         Level::DEBUG
+                          //     } else {
+                          //         Level::INFO
+                          //     },
+                          //     ..Default::default()
+                          // }),
         );
         let built_system = (
             LocalBuilder(0),
@@ -473,9 +503,49 @@ impl Engine {
 
         Self::additional(&mut app);
 
+        Engine::load_extensions(&mut app);
+
         app
     }
-    
+    fn load_extensions(app: &mut App) {
+        let mut exts: HashMap<&'static str, Box<dyn EngineExtension>> = HashMap::new();
+        let mut ext_loaders: HashMap<&'static str, Box<dyn EngineExtension>> = HashMap::new();
+        for hook in inventory::iter::<crate::core::extension::EngineExtensionHook>() {
+            let ext = hook.0();
+            if ext.init_level() == EngineExtensionInitLevel::ExtLoader {
+                let id = ext.id();
+                assert!(
+                    ext_loaders.insert(id, ext).is_none(),
+                    "duplicate extensions of {id} detected"
+                );
+            } else {
+                let id = ext.id();
+                assert!(
+                    exts.insert(id, ext).is_none(),
+                    "duplicate extensions of {id} detected"
+                );
+            }
+        }
+        for loader in ext_loaders.values_mut() {
+            loader.ext_load(&mut exts, app);
+        }
+
+        exts.extend(ext_loaders.into_iter());
+        for ext in exts.values_mut() {
+            ext.engine_build(app);
+        }
+        if app.get_sub_app(IntegratedServer).is_some() {
+            let exts_clone = exts
+                .iter_mut()
+                .map(|(k, v)| (*k, v.dyn_clone(app)))
+                .collect::<HashMap<_, _>>();
+            app.get_sub_app_mut(IntegratedServer)
+                .unwrap()
+                .world_mut()
+                .insert_resource(EngineExtensions(exts_clone));
+        }
+        app.world_mut().insert_resource(EngineExtensions(exts));
+    }
     fn parse_fast_flags(args: &ArgMatches) {
         if let Some(fastflags) = args.get_occurrences("fastflag") {
             let ff_types = FAST_FLAGS.names_and_types().collect::<HashMap<_, _>>();
@@ -541,7 +611,8 @@ impl Engine {
                 clap::Arg::new("integrated-server")
                     .long("integrated-server")
                     .help("Adds an integrated server to a client")
-                    .long_help("Adds an integrated server to the client build. May not be used in conjunction with --headless")
+                    .long_help("Adds an integrated server to the client build.\nIncompatible with --headless")
+                    .conflicts_with("headless")
                     .action(ArgAction::SetTrue),
             )
             .arg(
@@ -578,12 +649,17 @@ impl Engine {
         } else {
             app = Engine::default();
         }
+        if args.get_flag("integrated-server") {
+            Engine::insert_integrated_server(&mut app);
+        }
+
+        Engine::load_extensions(&mut app);
 
         if args.get_flag("dryrun") {
             println!("dry run, exiting the app");
             exit(0);
         }
-        
+
         app.run();
     }
 
@@ -599,6 +675,7 @@ impl Engine {
     }
 
     pub fn shutdown(w: &mut World) {
+        ext_pre_shutdown(w);
         let close = w
             .query::<&ServiceProviderMembers>()
             .single(w)
@@ -609,7 +686,11 @@ impl Engine {
         for container in containers_qs.iter(w) {
             TaskScheduler::fetch(&container.lua).prepare_for_shutdown();
         }
-        let reason = w.get_resource::<ShutdownReason>().copied().map(|x| x.0).unwrap_or(CloseReason::Unknown);
+        let reason = w
+            .get_resource::<ShutdownReason>()
+            .copied()
+            .map(|x| x.0)
+            .unwrap_or(CloseReason::Unknown);
         let prev = FAST_FLAGS.fetch::<FFSignalBehavior>();
         {
             let mut wa = WorldAccess::default();
@@ -689,6 +770,7 @@ impl Engine {
                 }
             }
         }
+        ext_post_shutdown(w);
         cleanup_instances(w);
         #[cfg(test)]
         {

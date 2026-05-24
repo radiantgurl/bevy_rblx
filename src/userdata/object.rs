@@ -2,8 +2,10 @@ use std::{ops::Deref, sync::Arc};
 
 use crate::{
     core::{
-        WorldAccess, bevy::{EntityCommandWrapper, ref_counted::commands::dec_ref_command}, lua::world_access::WorldAccessDestructor,
-        object::ObjectHeader
+        WorldAccess,
+        bevy::{EntityCommandWrapper, ref_counted::commands::dec_ref_command},
+        lua::world_access::WorldAccessDestructor,
+        object::ObjectHeader,
     },
     internal_prelude::*,
 };
