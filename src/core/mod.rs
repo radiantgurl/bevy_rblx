@@ -2,6 +2,7 @@ pub(crate) mod callback;
 pub(crate) mod clock;
 pub(crate) mod collection_service;
 pub(crate) mod data_model;
+pub(crate) mod extension;
 pub(crate) mod engine;
 pub(crate) mod entity_command;
 pub(crate) mod fastflags;

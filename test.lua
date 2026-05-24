@@ -1,0 +1,2 @@
+print("hai")
+game:DebugPrintTree()

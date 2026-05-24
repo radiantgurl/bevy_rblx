@@ -55,7 +55,7 @@ pub struct ObjectPropertyInfo {
     #[cfg(feature = "deprecated")]
     pub deprecated_alias_of: Option<&'static str>,
     #[cfg(feature = "deprecated")]
-    pub deprecated_aliases: Vec<&'static str>,
+    pub deprecated_aliases: &'static [&'static str],
 }
 
 impl ObjectPropertyInfo {
@@ -93,7 +93,27 @@ impl ObjectPropertyInfo {
         }
         #[cfg(feature = "deprecated")]
         {
-            todo!()
+            let changed;
+            let mut property_changed_signal;
+            {
+                let world_access = WorldAccess::fetch_readonly(lua);
+                let world = world_access.access_read_only();
+                let header = world.get::<ObjectHeader>(object).expect("entity is object");
+                changed = header.changed.reference();
+                if let Some(ev) = header.property_changed.get(self.property_name) {
+                    property_changed_signal = Some(ev.reference());
+                } else {
+                    property_changed_signal = None;
+                }
+            }
+            res = changed.fire_in_lua(lua, self.property_name == "Parent" || self.property_name == "parent", self.property_name);
+            if let Some(property_changed) = property_changed_signal {
+                res = res.and(property_changed.fire_in_lua(
+                    lua,
+                    self.property_name == "Parent",
+                    new_value,
+                ));
+            }
         }
         res
     }

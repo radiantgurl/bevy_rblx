@@ -662,7 +662,11 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
                         revert_to_default: None,
                         getter: #class_name::#get_name,
-                        setter: #setter
+                        setter: #setter,
+                        #[cfg(feature="deprecated")]
+                        deprecated_alias_of: None,
+                        #[cfg(feature="deprecated")]
+                        deprecated_aliases: &[]
                     }
                 };
                 if field.deprecated_aliases.is_empty() {

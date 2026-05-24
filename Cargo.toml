@@ -25,6 +25,7 @@ parking_lot = "^0.12"
 ptree = "^0.5"
 rbx_binary = "^2.0"
 static_assertions = { version = "^1.1", features = ["nightly"] }
+arboard = { version = "^3.x", features = ["wl-clipboard-rs", "wayland-data-control"]}
 
 [workspace]
 members = ["crates/bevy_rblx_derive"]
@@ -36,7 +37,6 @@ multiplayer = []
 [profile.release]
 opt-level = 3
 lto = true
-panic = "abort"
 debug = 1
 split-debuginfo = "packed"
 

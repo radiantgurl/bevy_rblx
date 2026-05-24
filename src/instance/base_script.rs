@@ -77,6 +77,7 @@ fn create_lua_function(
     env.raw_set("game", ObjectRef::new(lua, game_root))?;
     env.raw_set("workspace", ObjectRef::new(lua, workspace))?;
     env.raw_set("script", ObjectRef::new(lua, script))?;
+    env.set_safeenv(true);
     path.insert(0, '@');
     let res = lua
         .load(source)

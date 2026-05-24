@@ -1,3 +1,5 @@
+use std::io::Read;
+
 use bevy::prelude::*;
 use bevy_egui::{
     EguiContexts, EguiPrimaryContextPass,
@@ -20,12 +22,12 @@ use crate::{
     userdata::ObjectRef,
 };
 
-async fn interpreter_execute(lua: Lua, (e, table): (String, LuaTable)) -> LuaResult<()> {
+async fn interpreter_execute(lua: Lua, (e, table, chunk_name): (String, LuaTable, String)) -> LuaResult<()> {
     println!("{e}");
     let res = lua
         .load(e)
         .set_environment(table.clone())
-        .set_name("=interpreter")
+        .set_name(chunk_name)
         .eval_async::<LuaMultiValue>()
         .await;
     match res {
@@ -60,13 +62,18 @@ pub async fn interpreter(lua: Lua, (): ()) -> LuaResult<()> {
             },
         )
     };
-
-    let table = lua.create_table()?;
+    let env = lua.create_table()?;
     lua.globals()
-        .for_each(|k: LuaValue, v: LuaValue| table.raw_set(k, v))
+        .for_each(|k: LuaValue, v: LuaValue| env.raw_set(k, v))
         .unwrap();
+    let env_copy = lua.create_table()?;
+    let env_copy_mt = lua.create_table()?;
+    env_copy_mt.raw_set("__weak","v")?;
+    env_copy.set_metatable(Some(env_copy_mt))?;
+    env.for_each(|k: LuaValue,v: LuaValue| env_copy.raw_set(k,v))?;
     {
-        let table_clone = table.clone();
+        let table_clone = env.clone();
+        let table_clone2 = env_copy.clone();
         TaskScheduler::fetch(&lua).defer(
             &lua,
             lua.create_function(move |lua: &Lua, ()| {
@@ -87,18 +94,27 @@ pub async fn interpreter(lua: Lua, (): ()) -> LuaResult<()> {
                         .unwrap();
                 }
                 table_clone.raw_set("game", ObjectRef::new(lua, game))?;
-                table_clone.raw_set("workspace", ObjectRef::new(lua, workspace))
+                table_clone.raw_set("workspace", ObjectRef::new(lua, workspace))?;
+                table_clone2.raw_set("game", ObjectRef::new(lua, game))?;
+                table_clone2.raw_set("workspace", ObjectRef::new(lua, workspace))
             })?,
             (),
         )?;
     }
+    env.raw_set("executefile", lua.create_function(move |lua: &Lua, filename: String| {
+        let mut file = std::fs::File::open(filename.as_str()).into_lua_err()?;
+        let mut data = String::new();
+        file.read_to_string(&mut data).into_lua_err()?;
+        TaskScheduler::fetch(&lua).defer_custom_pd(&lua, lua.create_async_function(interpreter_execute)?, (data, env_copy.clone(), format!("@{filename}")), false)?;
+        Ok(())
+    })?)?;
     loop {
         let e = lua.yield_with::<String>(()).await?;
 
         TaskScheduler::fetch(&lua).defer_custom_pd(
             &lua,
             lua.create_async_function(interpreter_execute)?,
-            (e, table.clone()),
+            (e, env.clone(), "=interpreter"),
             false,
         )?;
     }

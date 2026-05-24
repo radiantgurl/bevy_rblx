@@ -454,7 +454,7 @@ impl LuaSingleton for TaskScheduler {
             )?;
             lua.globals().raw_set(
                 "wait",
-                lua.create_function(TaskScheduler::wait_deprecated_lua)?,
+                lua.create_async_function(TaskScheduler::wait_deprecated_lua)?,
             )?;
         }
 
