@@ -13,9 +13,44 @@ pub enum EngineExtensionInitLevel {
     PostCore,
     Runtime,
 }
+#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, Debug)]
+#[repr(u8)]
+pub enum EngineExtensionDistribution {
+    // NOTE: Other extensions with ExtLoader stage cannot see eachother!
+    Client,
+    Server,
+    Both
+}
+impl EngineExtensionDistribution {
+    pub fn client(self) -> bool {
+        match self {
+            Self::Both | Self::Client => true,
+            Self::Server => false
+        }
+    }
+    pub fn server(self) -> bool {
+        match self {
+            Self::Both | Self::Server => true,
+            Self::Client => false
+        }
+    }
+    pub fn matches(self, filter: Self) -> bool {
+        match (filter, self) {
+            (EngineExtensionDistribution::Client, EngineExtensionDistribution::Client)  |
+            (EngineExtensionDistribution::Client, EngineExtensionDistribution::Both) |
+            (EngineExtensionDistribution::Server, EngineExtensionDistribution::Server) |
+            (EngineExtensionDistribution::Server, EngineExtensionDistribution::Both) => true,
+            (EngineExtensionDistribution::Server, EngineExtensionDistribution::Client) |
+            (EngineExtensionDistribution::Client, EngineExtensionDistribution::Server) => false,
+            (EngineExtensionDistribution::Both, _) => unimplemented!()
+        }
+    }
+}
 #[allow(unused_variables)]
 pub trait EngineExtension: 'static + Send + Sync {
     fn id(&self) -> &'static str;
+    fn init_level(&self) -> EngineExtensionInitLevel;
+    fn distribution(&self) -> EngineExtensionDistribution;
     fn name(&self) -> &'static str {
         self.id()
     }
@@ -25,12 +60,11 @@ pub trait EngineExtension: 'static + Send + Sync {
     fn path(&self) -> Option<&'static str> {
         None
     }
-    fn init_level(&self) -> EngineExtensionInitLevel;
     fn dynamically_removable(&self) -> bool {
         false
     }
     fn default_enabled(&self) -> bool { true }
-
+    
     fn dyn_clone(&mut self, app: &mut App) -> Box<dyn EngineExtension>; // NOTE: This is only done when an integrated server is requested,
 
     fn ext_load(

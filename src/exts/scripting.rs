@@ -1,20 +1,20 @@
 use bevy::ecs::entity::Entity;
-use bevy::ecs::query::With;
+use bevy::ecs::hierarchy::ChildOf;
+use bevy::ecs::query::{Allow, With};
 use bevy::ecs::resource::Resource;
 use bevy::platform::collections::HashMap;
 use bevy_rblx_derive::{fast_flag, register, register_class};
 use mlua::prelude::*;
 
-use crate::core::extension::EngineExtensionInitLevel;
+use crate::core::extension::{EngineExtensionDistribution, EngineExtensionInitLevel};
 use crate::core::lua::{FFLuauForceJit, LuaSingleton};
-use crate::core::object::{Instance, ObjectHeader, RootInstance};
+use crate::core::object::{DisabledObject, Instance, ObjectHeader};
 use crate::core::{FAST_FLAGS, object::InstanceMembers};
 use crate::enums::RunContext;
-use crate::instance::WorkspaceMembers;
 use crate::internal::EngineExtension;
 use crate::internal_prelude::*;
 
-use crate::core::WorldAccess;
+use crate::core::{ContainerProvenance, WorldAccess};
 use crate::userdata::ObjectRef;
 
 register_class! {
@@ -146,13 +146,14 @@ fn set_enabled(lua: &Lua, this: Entity, new_value: bool) -> LuaResult<bool> {
     {
         let mut wa = WorldAccess::fetch(lua);
         let world = wa.access_synchronized()?;
+        let mut ancestors_qs = world.query_filtered::<&ChildOf, (With<ObjectHeader>, Allow<DisabledObject>)>();
         let mut members = BaseScriptMembers::fetch_members_mut(world, this);
         if members.enabled == new_value {
             return Ok(false);
         }
         members.enabled = new_value;
+        drop(members);
     }
-    todo!();
     if new_value {
     } else {
     }
@@ -203,6 +204,10 @@ impl EngineExtension for ScriptingExt {
 
     fn init_level(&self) -> EngineExtensionInitLevel {
         EngineExtensionInitLevel::Runtime
+    }
+
+    fn distribution(&self) -> EngineExtensionDistribution {
+        EngineExtensionDistribution::Both
     }
 
     fn dyn_clone(&mut self, _app: &mut bevy::app::App) -> Box<dyn EngineExtension> {

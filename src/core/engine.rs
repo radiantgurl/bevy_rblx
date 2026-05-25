@@ -40,8 +40,7 @@ use crate::{
         WorldAccess,
         bevy::ref_counted::RefCountedPlugin,
         extension::{
-            EngineExtension, EngineExtensionInitLevel, EngineExtensions, ext_post_core_init,
-            ext_post_shutdown, ext_pre_shutdown, ext_runtime_init,
+            EngineExtension, EngineExtensionDistribution, EngineExtensionInitLevel, EngineExtensions, ext_post_core_init, ext_post_shutdown, ext_pre_shutdown, ext_runtime_init
         },
         fastflags::FastFlagValue,
         lua::{
@@ -501,14 +500,6 @@ impl Engine {
                 .set(ScheduleRunnerPlugin {
                     run_mode: RunMode::Loop { wait: None },
                 })
-                .build(), // .add(LogPlugin {
-                          //     level: if cfg!(debug_assertions) {
-                          //         Level::DEBUG
-                          //     } else {
-                          //         Level::INFO
-                          //     },
-                          //     ..Default::default()
-                          // }),
         );
         let built_system = (
             LocalBuilder(0),
@@ -526,11 +517,16 @@ impl Engine {
         app
     }
     fn load_extensions(app: &mut App, enabled_exts: EnabledExts) {
+        let distrib = if app.world().contains_resource::<Headless>() {
+            EngineExtensionDistribution::Server
+        } else {
+            EngineExtensionDistribution::Client
+        };
         let mut exts: HashMap<&'static str, Box<dyn EngineExtension>> = HashMap::new();
         let mut ext_loaders: HashMap<&'static str, Box<dyn EngineExtension>> = HashMap::new();
         for hook in inventory::iter::<crate::core::extension::EngineExtensionHook>() {
             let ext = hook.0();
-            if !enabled_exts.should_be_enabled(ext.id(), ext.default_enabled()) {
+            if !enabled_exts.should_be_enabled(ext.id(), ext.default_enabled()) || !ext.distribution().matches(distrib) {
                 continue;
             }
             if ext.init_level() == EngineExtensionInitLevel::ExtLoader {
@@ -552,7 +548,7 @@ impl Engine {
         }
 
         exts.extend(ext_loaders.into_iter());
-        exts.retain(|id, _| enabled_exts.should_be_enabled(*id, true));
+        exts.retain(|id, e| enabled_exts.should_be_enabled(*id, true) && e.distribution().matches(distrib));
         for ext in exts.values_mut() {
             ext.engine_build(app);
         }
