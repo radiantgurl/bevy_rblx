@@ -580,8 +580,8 @@ register_class! {
         fn get_actor(lua: &Lua, this: ObjectRef) -> LuaResult<Option<ObjectRef>> {
             let wa = WorldAccess::fetch_readonly(lua);
             let world = wa.access_read_only();
-            let new_entity = world.get::<ContainerProvenance>(this.entity()).filter(|x| world.get::<RootInstance>(x.0).is_none());
-            Ok(new_entity.map(|p| ObjectRef::new(lua, p.0)))
+            let new_entity = world.get::<ContainerProvenance>(this.entity()).filter(|x| world.get::<RootInstance>(x.entity).is_none());
+            Ok(new_entity.map(|p| ObjectRef::new(lua, p.entity)))
         }
         fn get_attribute(lua: &Lua, this: ObjectRef, key: String) -> LuaResult<LuaValue> {
             let world_access = WorldAccess::fetch_readonly(lua);

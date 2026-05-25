@@ -1,3 +1,5 @@
+use std::mem::take;
+
 use crate::core::lua::{LuaSingleton, WorldAccess, system_time};
 use crate::core::object::ServiceMembers;
 use crate::enums::MessageType;
@@ -94,11 +96,38 @@ impl LuaSingleton for RblxLogs {
     }
 }
 
-fn build_message(s: String, t: LuaTable) -> String {
-    todo!()
+fn build_message(s: String, t: &LuaTable) -> LuaResult<String> {
+    let mut new_string = String::new();
+    let mut escaped_string = String::new();
+    let mut escape = false;
+    for c in s.chars() {
+        match (c, escape) {
+            ('{', false) => escape = true,
+            ('{', true) if escaped_string.is_empty() => {
+                escape = false;
+                new_string.push('{');
+            }
+            ('}', true) => {
+                new_string += &t.raw_get::<LuaValue>(take(&mut escaped_string))?.to_string()?;
+                escape = false;
+            }
+            (c, false) => new_string.push(c),
+            (c, true) => escaped_string.push(c),
+        }
+    }
+    Ok(new_string)
 }
 
+const LOG_SERVICE_ERROR_MT: &'static str = "LOG_SERVICE_ERROR_METATABLE";
+
 register_class! {
+    #[post_init=fn(lua: &Lua, _this: Entity) -> LuaResult<()> {
+        let table = lua.create_table()?;
+        table.raw_set("__tostring", lua.create_function(move |_lua: &Lua, this: LuaTable| this.raw_get::<LuaString>("message"))?)?;
+        table.set_readonly(true);
+        lua.set_named_registry_value(LOG_SERVICE_ERROR_MT, table)?;
+        Ok(())
+    }]
     priv LogService(Service)
     members {
         #[read_only]
@@ -114,11 +143,23 @@ register_class! {
             Ok(())
         }
         fn error(lua: &Lua, this: ObjectRef, message: String, context: Option<LuaTable>) -> LuaResult<()> {
-            lua_todo!()
+            let msg;
+            let tbl = lua.create_table()?;
+            tbl.raw_set("template", message.clone())?;
+            tbl.raw_set("stack", lua.traceback(None, 2)?)?;
+            if let Some(ctx) = context {
+                msg = build_message(message, &ctx)?;
+                tbl.raw_set("context", ctx)?;
+            } else {
+                msg = message;
+            }
+            push_log(lua, MessageType::MessageError, &msg);
+            tbl.raw_set("message", msg.clone())?;
+            Err(LuaError::runtime(msg))
         }
         fn info(lua: &Lua, this: ObjectRef, message: String, context: Option<LuaTable>) -> LuaResult<()> {
             if let Some(ctx) = context {
-                push_log(lua, MessageType::MessageInfo, build_message(message, ctx));
+                push_log(lua, MessageType::MessageInfo, build_message(message, &ctx)?);
             } else {
                 push_log(lua, MessageType::MessageInfo, message);
             }
@@ -126,7 +167,7 @@ register_class! {
         }
         fn warn(lua: &Lua, this: ObjectRef, message: String, context: Option<LuaTable>) -> LuaResult<()> {
             if let Some(ctx) = context {
-                push_log(lua, MessageType::MessageWarning, build_message(message, ctx));
+                push_log(lua, MessageType::MessageWarning, build_message(message, &ctx)?);
             } else {
                 push_log(lua, MessageType::MessageWarning, message);
             }
@@ -134,7 +175,7 @@ register_class! {
         }
         fn output(lua: &Lua, this: ObjectRef, message: String, context: Option<LuaTable>) -> LuaResult<()> {
             if let Some(ctx) = context {
-                push_log(lua, MessageType::MessageOutput, build_message(message, ctx));
+                push_log(lua, MessageType::MessageOutput, build_message(message, &ctx)?);
             } else {
                 push_log(lua, MessageType::MessageOutput, message);
             }
@@ -142,7 +183,7 @@ register_class! {
         }
         fn log(lua: &Lua, this: ObjectRef, ty: MessageType, message: String, context: Option<LuaTable>) -> LuaResult<()> {
             if let Some(ctx) = context {
-                push_log(lua, ty, build_message(message, ctx));
+                push_log(lua, ty, build_message(message, &ctx)?);
             } else {
                 push_log(lua, ty, message);
             }

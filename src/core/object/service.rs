@@ -1,14 +1,17 @@
-use bevy::ecs::{entity::Entity, query::With, system::{Commands, Query}};
+use bevy::ecs::{component::Component, entity::Entity, hierarchy::{ChildOf, Children}, query::{Allow, With}, system::{Commands, Query}};
 use bevy_rblx_derive::register_class;
 use mlua::prelude::*;
 
 use crate::{
     core::{
         lua::WorldAccess,
-        object::{Instance, InstanceMembers, RootInstance},
+        object::{DisabledObject, Instance, InstanceMembers, RootInstance},
     },
     internal_prelude::*,
 };
+
+#[derive(Clone, Copy, Component)]
+pub struct DisablingService;
 
 register_class! {
     #[post_init=fn(lua: &Lua, this: Entity) -> LuaResult<()> {
@@ -32,6 +35,10 @@ register_class! {
     methods {}
 }
 
-pub(in crate::core) fn auto_disable_objects(mut commands: Commands, q: Query<Entity>) {
-
+pub(in crate::core) fn auto_disable_objects(
+    mut commands: Commands,
+    descendants: Query<&Children, Allow<DisabledObject>>,
+    ancestors: Query<&ChildOf, Allow<DisabledObject>>
+) {
+    // if 
 }

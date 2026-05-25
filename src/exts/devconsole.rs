@@ -3,7 +3,7 @@ use std::io::Read;
 use crate::{
     core::{
         Headless, LoggedMessage, LuauContainer, RblxLogs, TaskScheduler, ThreadIdentity,
-        extension::{EngineExtension, EngineExtensionInitLevel},
+        extension::{EngineExtension, EngineExtensionDistribution, EngineExtensionInitLevel},
         lua::ThreadIdentityType,
         object::RootInstance,
         push_log, push_lua_error,
@@ -307,6 +307,9 @@ impl EngineExtension for DevConsoleExtension {
     fn init_level(&self) -> EngineExtensionInitLevel {
         EngineExtensionInitLevel::Runtime
     }
+    fn distribution(&self) -> EngineExtensionDistribution {
+        EngineExtensionDistribution::Client
+    }
 
     fn dyn_clone(&mut self, _app: &mut App) -> Box<dyn EngineExtension> {
         Box::new(Self)
@@ -316,7 +319,7 @@ impl EngineExtension for DevConsoleExtension {
         "Developer Console"
     }
     fn description(&self) -> Option<&'static str> {
-        Some("Adds a Luau interpreter")
+        Some("Adds a developer console on the F9 key")
     }
 
     fn dynamically_removable(&self) -> bool {
@@ -324,23 +327,19 @@ impl EngineExtension for DevConsoleExtension {
     }
 
     fn runtime_init(&self, world: &mut World) {
-        if world.get_resource::<Headless>().is_none() {
-            world.run_system_once(start_input_handler).unwrap();
-        }
+        world.run_system_once(start_input_handler).unwrap();
     }
     fn post_shutdown_hook(&self, world: &mut World) {
-        if world.get_resource::<Headless>().is_none() {
-            world
-                .remove_resource::<InterpreterThread>()
-                .expect("No interpreter thread was removed");
-            world.schedule_scope(EguiPrimaryContextPass, |w, s| {
-                s.remove_systems_in_set(
-                    ui_commandline,
-                    w,
-                    ScheduleCleanupPolicy::RemoveSystemsOnly,
-                )
-                .unwrap();
-            });
-        }
+        world
+            .remove_resource::<InterpreterThread>()
+            .expect("No interpreter thread was removed");
+        world.schedule_scope(EguiPrimaryContextPass, |w, s| {
+            s.remove_systems_in_set(
+                ui_commandline,
+                w,
+                ScheduleCleanupPolicy::RemoveSystemsOnly,
+            )
+            .unwrap();
+        });
     }
 }

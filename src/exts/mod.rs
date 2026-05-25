@@ -1,2 +1,2 @@
-pub mod input;
+pub mod devconsole;
 pub mod scripting;
