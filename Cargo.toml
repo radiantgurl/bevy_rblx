@@ -5,7 +5,7 @@ edition = "2024"
 build = "src/build.rs"
 authors = ["Radiant"]
 description = "Running Roblox games inside Bevy Game Engine"
-license-file = "LICENSE.txt"
+license-file = "LICENSE"
 repository = "https://github.com/radiantgurl/bevy_rblx.git"
 
 [dependencies]
