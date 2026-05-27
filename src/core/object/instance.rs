@@ -227,17 +227,19 @@ register_class! {
         'outer: {
             let wa = WorldAccess::fetch_readonly(lua);
             let world = wa.access_read_only();
-            for e in world.get::<Children>(this).unwrap() {
-                if world.get::<Name>(*e).unwrap().as_str() == field {
-                    entity = *e;
-                    break 'outer;
+            if let Some(c) = world.get::<Children>(this) {
+                for e in c {
+                    if world.get::<Name>(*e).unwrap().as_str() == field {
+                        entity = *e;
+                        break 'outer;
+                    }
                 }
             }
             return Ok(LuaValue::Nil)
         }
         ObjectRef::new(lua, entity).into_lua(lua)
     }]
-    #[require_components(Name, Children)]
+    #[require_components(Name)]
     abstract Instance(Object)
     members {
         priv attributes: HashMap<String, LuaFreeValue>,
@@ -361,7 +363,7 @@ register_class! {
                 if members.destroy_protected {
                     return Ok(());
                 }
-                world.get::<Children>(this.entity()).expect("is instance").to_vec()
+                world.get::<Children>(this.entity()).map(|x| x.to_vec()).unwrap_or_default()
             };
 
             for i in children {
@@ -521,10 +523,12 @@ register_class! {
             {
                 let world_access = WorldAccess::fetch_readonly(lua);
                 let world = world_access.access_read_only();
-                for child in world.get::<Children>(this.entity()).expect("instances have children").iter() {
-                    if world.get::<Name>(child).expect("expecting instance").as_str() == name {
-                        e = Some(child);
-                        break;
+                if let Some(children) = world.get::<Children>(this.entity()) {
+                    for child in children.iter() {
+                        if world.get::<Name>(child).expect("expecting instance").as_str() == name {
+                            e = Some(child);
+                            break;
+                        }
                     }
                 }
             }
@@ -535,11 +539,13 @@ register_class! {
             {
                 let world_access = WorldAccess::fetch_readonly(lua);
                 let world = world_access.access_read_only();
-                for child in world.get::<Children>(this.entity()).expect("instances have children").iter() {
-                    let cn = world.get::<ObjectHeader>(child).expect("expecting object").vtable.class_name;
-                    if cn == &class_name {
-                        e = Some(child);
-                        break;
+                if let Some(children) = world.get::<Children>(this.entity()) {
+                    for child in children.iter() {
+                        let cn = world.get::<ObjectHeader>(child).expect("expecting object").vtable.class_name;
+                        if cn == &class_name {
+                            e = Some(child);
+                            break;
+                        }
                     }
                 }
             }
@@ -550,11 +556,13 @@ register_class! {
             {
                 let world_access = WorldAccess::fetch_readonly(lua);
                 let world = world_access.access_read_only();
-                for child in world.get::<Children>(this.entity()).expect("instances have children").iter() {
-                    for i in world.get::<ObjectHeader>(child).expect("expecting object").vtable.method_resolution_order.iter() {
-                        if i.class_name == &class_name {
-                            e = Some(child);
-                            break;
+                if let Some(children) = world.get::<Children>(this.entity()) {
+                    for child in children.iter() {
+                        for i in world.get::<ObjectHeader>(child).expect("expecting object").vtable.method_resolution_order.iter() {
+                            if i.class_name == &class_name {
+                                e = Some(child);
+                                break;
+                            }
                         }
                     }
                 }
@@ -619,8 +627,8 @@ register_class! {
                 let wa = WorldAccess::fetch_readonly(lua);
                 let world = wa.access_read_only();
                 world.get::<Children>(this.entity())
-                    .expect("instance has children")
-                    .iter().collect::<Vec<_>>()
+                    .map(|c| c.iter().collect::<Vec<_>>())
+                    .unwrap_or_default()
             };
             Ok(
                 entities.into_iter().map(|e| ObjectRef::new(lua, e))
@@ -791,13 +799,13 @@ register_class! {
             stack.push(descendants.get(this.entity()).unwrap().len());
             for e in descendants.iter_descendants_depth_first(this.entity()) {
                 *stack.last_mut().unwrap() -= 1;
-                let c = descendants.get(e).unwrap();
+                let children_len = descendants.get(e).map(|c| c.len()).unwrap_or(0);
                 let name = format!("{} ({}) id: {}", names.get(e).unwrap(), objects.get(e).unwrap().vtable.class_name, e);
-                if c.is_empty() {
+                if children_len == 0{
                     tree_build.add_empty_child(name);
                 } else {
                     tree_build.begin_child(name);
-                    stack.push(c.len());
+                    stack.push(children_len);
                 }
                 while let Some(x) = stack.last().copied() && x == 0 {
                     stack.pop();

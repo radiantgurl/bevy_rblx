@@ -49,7 +49,7 @@ use crate::{
             world_access::WorldAccessDestructor,
         },
         object::{
-            DisabledObject, NewInstanceEvent, RunServiceMembers, data_model::register_game_and_workspace_global, run_service::RunService, service_provider::ServiceProviderMembers
+            DisabledObject, NewInstanceEvent, RunServiceMembers, data_model::register_game_and_workspace_global, run_service::RunService, service::auto_disable_objects, service_provider::ServiceProviderMembers
         },
     },
     enums::{CloseReason, SignalBehavior},
@@ -73,7 +73,7 @@ fn put_world_local(l: &mut Option<World>, mut fake_world: World, real_world: &mu
     *l = Some(fake_world);
 }
 
-pub fn initialize(w: &mut World) {
+pub(super) fn initialize(w: &mut World) {
     let container = LuauContainer::default();
     clock(); // initialize clock
     let root_instance;
@@ -99,7 +99,7 @@ pub fn initialize(w: &mut World) {
     w.entity_mut(root_instance).insert(container);
 }
 
-pub fn run_synchronized(world: &mut World) {
+pub(super) fn run_synchronized(world: &mut World) {
     let mut containers = world.query::<&LuauContainer>();
 
     let lua_cloned_iter = containers
@@ -115,7 +115,7 @@ pub fn run_synchronized(world: &mut World) {
         WorldAccess::fetch(&lua).clear_sync_access(world);
     }
 }
-pub fn run_desynchronized(world: &mut World, mut l: Local<Option<World>>) {
+pub(super) fn run_desynchronized(world: &mut World, mut l: Local<Option<World>>) {
     if l.is_none() {
         *l = Some(World::new());
     }
@@ -164,7 +164,7 @@ pub fn run_desynchronized(world: &mut World, mut l: Local<Option<World>>) {
     }
 }
 
-pub fn dispatch_synchronized(world: &mut World) {
+pub(super) fn dispatch_synchronized(world: &mut World) {
     let mut containers = world.query::<&LuauContainer>();
 
     let lua_cloned_iter = containers
@@ -179,7 +179,7 @@ pub fn dispatch_synchronized(world: &mut World) {
         WorldAccess::fetch(&lua).clear_sync_access(world);
     }
 }
-pub fn dispatch_desynchronized(world: &mut World, mut l: Local<Option<World>>) {
+pub(super) fn dispatch_desynchronized(world: &mut World, mut l: Local<Option<World>>) {
     if l.is_none() {
         *l = Some(World::new());
     }
@@ -316,7 +316,7 @@ create_runservice_trigger!(stepped);
 #[derive(AppLabel, Clone, Copy, Hash, Debug, Default, PartialEq, Eq)]
 pub struct IntegratedServer;
 
-static DEBUG_FLAG: AtomicU8 = AtomicU8::new(0);
+pub static VERBOSE_FLAG: AtomicU8 = AtomicU8::new(0);
 
 enum EnabledExts {
     Disable(Vec<String>),
@@ -362,6 +362,7 @@ impl Engine {
         app.add_systems(
             PreUpdate,
             (
+                auto_disable_objects,
                 runservice_event_pre_animation,
                 dispatch_synchronized,
                 dispatch_desynchronized,
@@ -430,7 +431,7 @@ impl Engine {
         app.world_mut().insert_resource(Headless);
 
         app.add_plugins(MinimalPlugins.build().add(LogPlugin {
-            level: match DEBUG_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
+            level: match VERBOSE_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
                 0 => Level::INFO,
                 1 => Level::DEBUG,
                 _ => Level::TRACE
@@ -446,7 +447,7 @@ impl Engine {
         let mut app = App::new();
 
         app.add_plugins(DefaultPlugins.set(LogPlugin {
-            level: match DEBUG_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
+            level: match VERBOSE_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
                 0 => Level::INFO,
                 1 => Level::DEBUG,
                 _ => Level::TRACE
@@ -573,6 +574,14 @@ impl Engine {
     }    
     
     fn parse_fast_flags(args: &ArgMatches) {
+        if args.get_flag("fastflags") {
+            println!("NAME TYPE DEFAULT");
+            for (name, ty) in FAST_FLAGS.names_and_types() {
+                let v = FAST_FLAGS.fetch_dyn(name).unwrap();
+                println!("{name} {ty} {v}");
+            }
+            exit(0);
+        }
         if let Some(fastflags) = args.get_occurrences("fastflag") {
             let ff_types = FAST_FLAGS.names_and_types().collect::<HashMap<_, _>>();
             for mut occurence in fastflags {
@@ -653,6 +662,14 @@ impl Engine {
                     .value_parser(value_parser!(String)),
             )
             .arg(
+                clap::Arg::new("fastflags")
+                    .help_heading("Config")
+                    .long("fastflags")
+                    .help("Show available fastflags")
+                    .long_help("Show available fastflags and their corresponding types and defaults\nThis is printed as a table with 3 columns, the header and the values following it.")
+                    .action(ArgAction::SetTrue)
+            )
+            .arg(
                 clap::Arg::new("enabled-exts")
                     .help_heading("Config")
                     .long("enabled-exts")
@@ -696,7 +713,7 @@ impl Engine {
 
         Engine::parse_fast_flags(&args);
 
-        DEBUG_FLAG.store(args.get_count("debug"), std::sync::atomic::Ordering::Relaxed);
+        VERBOSE_FLAG.store(args.get_count("debug"), std::sync::atomic::Ordering::Relaxed);
 
         if args.get_flag("headless") {
             app = Engine::headless();

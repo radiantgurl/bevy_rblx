@@ -29,11 +29,11 @@ pub enum FastFlagType {
 impl std::fmt::Display for FastFlagType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FastFlagType::String => f.write_str("String"),
-            FastFlagType::Boolean => f.write_str("Boolean"),
-            FastFlagType::Int => f.write_str("Int"),
-            FastFlagType::Uint => f.write_str("Uint"),
-            FastFlagType::Float => f.write_str("Float"),
+            FastFlagType::String => f.write_str("str"),
+            FastFlagType::Boolean => f.write_str("bool"),
+            FastFlagType::Int => f.write_str("int"),
+            FastFlagType::Uint => f.write_str("uint"),
+            FastFlagType::Float => f.write_str("float"),
         }
     }
 }
@@ -46,6 +46,18 @@ pub enum FastFlagValue {
     Int(i64),
     Uint(u64),
     Float(f64),
+}
+
+impl std::fmt::Display for FastFlagValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FastFlagValue::String(s) => write!(f, "{s:#?}"),
+            FastFlagValue::Boolean(b) => write!(f,"{b}"),
+            FastFlagValue::Int(i) => write!(f,"{i}"),
+            FastFlagValue::Uint(i) => write!(f,"{i}"),
+            FastFlagValue::Float(n) => write!(f,"{n}"),
+        }
+    }
 }
 
 impl FastFlagValue {

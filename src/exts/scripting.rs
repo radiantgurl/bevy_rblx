@@ -7,7 +7,7 @@ use bevy_rblx_derive::{fast_flag, register, register_class};
 use mlua::prelude::*;
 
 use crate::core::extension::{EngineExtensionDistribution, EngineExtensionInitLevel};
-use crate::core::lua::{FFLuauForceJit, LuaSingleton};
+use crate::core::lua::{FFLuauDefaultJit, LuaSingleton};
 use crate::core::object::{DisabledObject, Instance, ObjectHeader};
 use crate::core::{FAST_FLAGS, object::InstanceMembers};
 use crate::enums::RunContext;
@@ -56,6 +56,8 @@ fn create_lua_function(
 ) -> LuaResult<LuaFunction> {
     if source.starts_with("--!native") && !FAST_FLAGS.fetch::<FFLuauDisableNativeFlag>() {
         lua.enable_jit(true);
+    } else if source.starts_with("--!no-native") {
+        lua.enable_jit(false);
     }
     let env = lua.create_table()?;
     lua.globals()
@@ -69,7 +71,7 @@ fn create_lua_function(
         .set_name(path)
         .set_environment(env)
         .into_function();
-    lua.enable_jit(FAST_FLAGS.fetch::<FFLuauForceJit>());
+    lua.enable_jit(FAST_FLAGS.fetch::<FFLuauDefaultJit>());
     res
 }
 
@@ -143,21 +145,24 @@ impl LuaSingleton for ModuleScript {
 }
 
 fn set_enabled(lua: &Lua, this: Entity, new_value: bool) -> LuaResult<bool> {
-    {
-        let mut wa = WorldAccess::fetch(lua);
-        let world = wa.access_synchronized()?;
-        let mut ancestors_qs = world.query_filtered::<&ChildOf, (With<ObjectHeader>, Allow<DisabledObject>)>();
-        let mut members = BaseScriptMembers::fetch_members_mut(world, this);
-        if members.enabled == new_value {
-            return Ok(false);
-        }
-        members.enabled = new_value;
-        drop(members);
+    let mut wa = WorldAccess::fetch(lua);
+    let world = wa.access_synchronized()?;
+    let mut members = BaseScriptMembers::fetch_members_mut(world, this);
+    if members.enabled == new_value {
+        return Ok(false);
+    }
+    members.enabled = new_value;
+    let started = members.started;
+    drop(members);
+    if started == new_value {
+        return Ok(true);
     }
     if new_value {
+
     } else {
+
     }
-    Ok(true)
+    return Ok(true);
 }
 
 register_class! {
@@ -186,7 +191,8 @@ register_class! {
             set_enabled(lua, this, !new_value)
         }]
         virtual disabled: bool,
-        pub run_context: RunContext
+        pub run_context: RunContext,
+        priv started: bool
     }
     methods {}
 }

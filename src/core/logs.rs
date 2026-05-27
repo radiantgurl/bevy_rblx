@@ -2,6 +2,7 @@ use std::mem::take;
 
 use crate::core::lua::{LuaSingleton, WorldAccess, system_time};
 use crate::core::object::ServiceMembers;
+use crate::core::object::service::DisablingService;
 use crate::enums::MessageType;
 use crate::internal_prelude::*;
 use crate::userdata::{ObjectRef, RBXScriptSignal};
@@ -128,6 +129,7 @@ register_class! {
         lua.set_named_registry_value(LOG_SERVICE_ERROR_MT, table)?;
         Ok(())
     }]
+    #[require_components(DisablingService)]
     priv LogService(Service)
     members {
         #[read_only]

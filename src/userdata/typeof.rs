@@ -2,7 +2,7 @@ use crate::userdata::ObjectRef;
 use crate::{
     core::{
         FAST_FLAGS, WorldAccess,
-        lua::{FFLuauForceJit, LuaSingleton},
+        lua::{FFLuauDefaultJit, LuaSingleton},
         object::ObjectHeader,
     },
     internal_prelude::*,
@@ -44,7 +44,7 @@ impl LuaSingleton for TypeOfFn {
 
         lua.globals().raw_set("typeof", new_typeof)?;
 
-        lua.enable_jit(FAST_FLAGS.fetch::<FFLuauForceJit>());
+        lua.enable_jit(FAST_FLAGS.fetch::<FFLuauDefaultJit>());
 
         Ok(())
     }

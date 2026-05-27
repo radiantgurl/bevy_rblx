@@ -2,7 +2,7 @@ use std::io::Read;
 
 use crate::{
     core::{
-        Headless, LoggedMessage, LuauContainer, RblxLogs, TaskScheduler, ThreadIdentity,
+        LoggedMessage, LuauContainer, RblxLogs, TaskScheduler, ThreadIdentity,
         extension::{EngineExtension, EngineExtensionDistribution, EngineExtensionInitLevel},
         lua::ThreadIdentityType,
         object::RootInstance,
@@ -31,7 +31,6 @@ async fn interpreter_execute(
     lua: Lua,
     (e, table, chunk_name): (String, LuaTable, String),
 ) -> LuaResult<()> {
-    println!("{e}");
     let res = lua
         .load(e)
         .set_environment(table.clone())
@@ -96,6 +95,7 @@ pub async fn interpreter(lua: Lua, (): ()) -> LuaResult<()> {
     )?;
     loop {
         let e = lua.yield_with::<String>(()).await?;
+        println!("> {e}");
 
         TaskScheduler::fetch(&lua).defer_custom_pd(
             &lua,
