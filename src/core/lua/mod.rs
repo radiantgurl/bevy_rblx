@@ -7,7 +7,7 @@ pub use function::CachedLuaFunction;
 pub use security::{SecurityContext, ThreadIdentityType};
 
 pub use luau::{
-    ContainerProvenance, FFLuauDebugLevel, FFLuauForceJit, FFLuauGlobalTypeInfoLevel,
+    ContainerProvenance, FFLuauDebugLevel, FFLuauDefaultJit, FFLuauGlobalTypeInfoLevel,
     FFLuauOptimization, LuauContainer, ThreadIdentity,
 };
 pub use scheduler::{

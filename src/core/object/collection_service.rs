@@ -3,7 +3,7 @@ use bevy::{
     platform::collections::{HashMap, HashSet},
 };
 
-use crate::{core::bevy::RefCounted, internal_prelude::*};
+use crate::{core::{bevy::RefCounted, object::service::DisablingService}, internal_prelude::*};
 use bevy_rblx_derive::register_class;
 use mlua::prelude::*;
 
@@ -37,6 +37,7 @@ fn on_destroy(lua: &Lua, (this, instance): (ObjectRef, ObjectRef)) -> LuaResult<
 }
 
 register_class! {
+    #[require_components(DisablingService)]
     priv CollectionService (Service)
     members {
         priv instances: HashMap<String, HashSet<Entity>>,

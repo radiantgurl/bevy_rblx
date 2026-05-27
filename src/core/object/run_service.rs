@@ -1,3 +1,4 @@
+use crate::core::object::service::DisablingService;
 use crate::core::{Headless, TaskScheduler};
 use crate::core::lua::{callback::LuaPrioCallbackTableCached, CachedLuaFunction};
 use crate::enums::{PredictionMode, PredictionStatus, RunState, StepFrequency};
@@ -42,6 +43,7 @@ const SIMULATION_DISCONNECT: CachedLuaFunction = {
 };
 
 register_class! {
+    #[require_components(DisablingService)]
     priv RunService (Service)
     members {
         #[getter=fn(lua: &Lua, _this: Entity, _vtable: &'static ObjectVTable) -> LuaResult<LuaValue> {

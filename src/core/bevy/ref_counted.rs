@@ -1,3 +1,5 @@
+#[cfg(debug_assertions)]
+use crate::core::engine::VERBOSE_FLAG;
 use crate::{
     core::{FAST_FLAGS, object::object::DisabledObject},
     internal_prelude::*,
@@ -185,10 +187,37 @@ use commands::*;
 
 impl<'a> RefCountedEntityCommandsExt for EntityCommands<'a> {
     unsafe fn inc_ref(&mut self) -> &mut Self {
+        #[cfg(debug_assertions)]
+        if VERBOSE_FLAG.load(Ordering::Relaxed) >= 3 {
+            use std::backtrace::{Backtrace, BacktraceStatus};
+            let bt = Backtrace::capture();
+            match bt.status()  {
+                BacktraceStatus::Captured => {
+                    let bt_str = bt.to_string();
+                    for i in bt_str.split('\n').skip(1).step_by(2).take(9) {
+                        println!("{i}");
+                    }
+                },
+                _ => (),
+            }
+        }
         self.queue(inc_ref_command)
     }
-
     unsafe fn dec_ref(&mut self) -> &mut Self {
+        #[cfg(debug_assertions)]
+        if VERBOSE_FLAG.load(Ordering::Relaxed) >= 3 {
+            use std::backtrace::{Backtrace, BacktraceStatus};
+            let bt = Backtrace::capture();
+            match bt.status()  {
+                BacktraceStatus::Captured => {
+                    let bt_str = bt.to_string();
+                    for i in bt_str.split('\n').skip(1).step_by(2).take(9) {
+                        println!("{i}");
+                    }
+                },
+                _ => (),
+            }
+        }
         self.queue(dec_ref_command)
     }
     fn protect(&mut self) -> &mut Self {
@@ -287,6 +316,9 @@ pub fn assign_refcounted_groups(
                         // get bigger one
                         let root_entity;
                         let group;
+                        if g1 == g2 {
+                            continue;
+                        }
                         if Arc::strong_count(&g1.inner) > Arc::strong_count(&g2.inner) {
                             root_entity = parent_hierarchy.root_ancestor::<ChildOf>(parent);
                             group = g1;

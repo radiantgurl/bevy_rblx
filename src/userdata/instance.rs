@@ -22,11 +22,13 @@ pub fn instance_protected_new(
         let res = INSTANCE_CONSTRUCTOR.protected_new(lua, entity.reborrow(), &class_name);
 
         if res.is_ok() {
+            bevy::log::trace!(target: "bevy_rblx::instance_protected_new", "Spawning instance {} with class {class_name}", entity.id());
             if parent.is_some() {
                 entity.insert(ChildOf(parent.unwrap().entity()));
             }
             entity.id()
         } else {
+            bevy::log::error!(target: "bevy_rblx::instance_protected_new", "Failed spawning instance {} with class {class_name}", entity.id());
             entity.despawn(); // abort
             res?;
             unreachable!()
@@ -35,7 +37,11 @@ pub fn instance_protected_new(
     let vtable = *OBJECT_VTABLES.get(class_name.as_str()).unwrap();
     for vtable in vtable.method_resolution_order.iter().copied() {
         if let Some(post_init) = vtable.post_init {
-            post_init(lua, e)?;
+            if let Err(err) = post_init(lua, e) {
+                // The ref counted system will automatically delete the object if this fails
+                bevy::log::error!(target: "bevy_rblx::instance_protected_new", "Failed spawning instance {e} with class {class_name}");
+                return Err(err);
+            }
         }
     }
     Ok(ObjectRef::new(lua, e))
@@ -50,8 +56,10 @@ pub fn instance_new(lua: &Lua, class_name: String) -> LuaResult<ObjectRef> {
         let res = INSTANCE_CONSTRUCTOR.new(lua, entity.reborrow(), &class_name);
 
         if res.is_ok() {
+            bevy::log::debug!(target: "bevy_rblx::instance_new", "Spawning instance {} with class {class_name}", entity.id());
             entity.id()
         } else {
+            bevy::log::error!(target: "bevy_rblx::instance_new", "Failed spawning instance {} with class {class_name}", entity.id());
             entity.despawn(); // abort
             res?;
             unreachable!()
@@ -60,7 +68,11 @@ pub fn instance_new(lua: &Lua, class_name: String) -> LuaResult<ObjectRef> {
     let vtable = *OBJECT_VTABLES.get(class_name.as_str()).unwrap();
     for vtable in vtable.method_resolution_order.iter().copied().rev() {
         if let Some(post_init) = vtable.post_init {
-            post_init(lua, e)?;
+            if let Err(err) = post_init(lua, e) {
+                // The ref counted system will automatically delete the object if this fails
+                bevy::log::error!(target: "bevy_rblx::instance_new", "Failed spawning instance {e} with class {class_name}");
+                return Err(err);
+            }
         }
     }
     Ok(ObjectRef::new(lua, e))

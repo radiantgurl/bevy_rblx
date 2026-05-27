@@ -44,7 +44,7 @@ impl LuauContainer {
     fn internal_init(mut self) -> Self {
         init_singletons(&mut self.lua).unwrap();
 
-        self.lua.enable_jit(FAST_FLAGS.fetch::<FFLuauForceJit>());
+        self.lua.enable_jit(FAST_FLAGS.fetch::<FFLuauDefaultJit>());
 
         let compiler = Compiler::new()
             .set_debug_level(FAST_FLAGS.fetch::<FFLuauDebugLevel>() as u8)
@@ -172,7 +172,7 @@ impl ThreadIdentity {
     }
 }
 
-fast_flag!(FFLuauForceJit: bool = false);
+fast_flag!(FFLuauDefaultJit: bool = false);
 fast_flag!(FFLuauDebugLevel: u64 = 1);
 fast_flag!(FFLuauOptimization: u64 = 1);
 fast_flag!(FFLuauGlobalTypeInfoLevel: bool = false);
@@ -204,14 +204,12 @@ pub fn assign_provenance(
         (
             With<ObjectHeader>,
             Without<ContainerProvenance>,
-            With<Children>,
         ),
     >,
     changed_provenance: Query<
         Entity,
         (
             With<ContainerProvenance>,
-            With<Children>,
             With<ObjectHeader>,
             Changed<ChildOf>
         )
@@ -243,8 +241,8 @@ pub fn assign_provenance(
                     });
                 }
                 for e in descendants.iter_descendants(e) {
-                        if let Ok(prov) = has_provenance.get(e) && !prov.internally_managed {
-                            commands.entity(e).insert(ContainerProvenance {
+                    if let Ok(prov) = has_provenance.get(e) && !prov.internally_managed {
+                        commands.entity(e).insert(ContainerProvenance {
                             entity: anc_prov.entity,
                             internally_managed: false
                         });
