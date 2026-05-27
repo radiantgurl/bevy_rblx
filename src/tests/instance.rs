@@ -52,6 +52,44 @@ pub fn simple_creation_and_deletion() {
 }
 
 #[test]
+pub fn ref_counted_test() {
+    let mut app = Engine::test_mode(5);
+    app.add_systems(PostStartup, post_startup_hook);
+    fn post_startup_hook(w: &mut World) {
+        let lua = {
+            let game = w
+                .query_filtered::<Entity, With<RootInstance>>()
+                .single(w)
+                .unwrap();
+            w.get::<LuauContainer>(game).unwrap().lua.clone()
+        };
+        lua.load(
+            r#"
+        task.defer(function()
+            local m = Instance.new("ModuleScript")
+            --m.Source = ""
+            m.Parent = workspace
+            local f = Instance.new("Folder")
+            f.Parent = game:GetService("ReplicatedStorage")
+            f.Name = "Modules"
+            m.Parent = f
+
+            f = nil
+            m = nil
+            
+            task.defer(task.spawn, coroutine.running())
+            coroutine.yield()
+            assert(game.ReplicatedStorage.Modules ~= nil, "modules exist")
+            assert(game.ReplicatedStorage.Modules.ModuleScript ~= nil, "modulescript exists")
+        end)"#,
+        )
+        .exec()
+        .unwrap();
+    }
+    app.run();
+}
+
+#[test]
 pub fn bind_to_close() {
     let mut app = Engine::test_mode(4);
     app.add_systems(PostStartup, post_startup_hook);

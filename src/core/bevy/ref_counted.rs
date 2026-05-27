@@ -38,17 +38,17 @@ impl Clone for RefCountedGroup {
 }
 
 impl RefCountedGroup {
-    pub unsafe fn inc(&self) {
-        self.held.fetch_add(1, Relaxed);
-        self.inner.fetch_add(1, Ordering::AcqRel);
+    pub unsafe fn inc(&mut self) -> u32 {
+        *self.held.get_mut() += 1;
+        self.inner.fetch_add(1, Ordering::AcqRel)
     }
-    unsafe fn inc_multiple(&self, amount: u32) {
-        self.held.fetch_add(amount, Relaxed);
-        self.inner.fetch_add(amount, Ordering::AcqRel);
+    unsafe fn inc_multiple(&mut self, amount: u32) -> u32 {
+        *self.held.get_mut() += 1;
+        self.inner.fetch_add(amount, Ordering::AcqRel)
     }
-    pub unsafe fn dec(&self) {
-        self.held.fetch_sub(1, Relaxed);
-        self.inner.fetch_sub(1, Ordering::AcqRel);
+    pub unsafe fn dec(&mut self) -> u32 {
+        *self.held.get_mut() -= 1;
+        self.inner.fetch_sub(1, Ordering::AcqRel)
     }
 }
 
@@ -74,16 +74,16 @@ impl Clone for RefCounted {
 
 impl RefCounted {
     pub unsafe fn inc(&mut self) -> u32 {
-        let r = self.count.fetch_add(1, Ordering::AcqRel)+1;
-        if let Some(x) = self.group.as_ref() {
-            return x.inner.fetch_add(1, Ordering::AcqRel)+1;
+        let r = self.count.fetch_add(1, Ordering::Relaxed)+1;
+        if let Some(x) = self.group.as_mut() {
+            return x.inc();
         }
         r
     }
     pub unsafe fn dec(&mut self) -> u32 {
-        let r = self.count.fetch_sub(1, Ordering::AcqRel)-1;
-        if let Some(x) = self.group.as_ref() {
-            return x.inner.fetch_sub(1, Ordering::AcqRel)-1;
+        let r = self.count.fetch_sub(1, Ordering::Relaxed)-1;
+        if let Some(x) = self.group.as_mut() {
+            return x.dec();
         }
         r
     }
@@ -142,7 +142,7 @@ impl RefCounted {
     pub unsafe fn set_group(&mut self, group: Option<RefCountedGroup>) {
         self.group = group;
         let c = *self.count.get_mut();
-        if let Some(x) = self.group.as_ref() {
+        if let Some(x) = self.group.as_mut() {
             unsafe { x.inc_multiple(c) };
         }
     }
