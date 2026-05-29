@@ -105,8 +105,8 @@ impl IntoLua for &LuaFreeValue {
 
 #[diagnostic::on_unimplemented(
     message = "{Self} is not transferrable across Lua instances",
-    label = "{Self} is local to a Lua instance",
-    note = "you should use this with its own lua reference by storing a WeakLua reference"
+    label = "cannot be shared between Lua instances",
+    note = "you could probably convert this into a LuaFreeValue to transfer it between instances if the type is primitive enough"
 )]
 pub auto trait LuaSend {}
 

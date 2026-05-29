@@ -52,10 +52,10 @@ impl std::fmt::Display for FastFlagValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FastFlagValue::String(s) => write!(f, "{s:#?}"),
-            FastFlagValue::Boolean(b) => write!(f,"{b}"),
-            FastFlagValue::Int(i) => write!(f,"{i}"),
-            FastFlagValue::Uint(i) => write!(f,"{i}"),
-            FastFlagValue::Float(n) => write!(f,"{n}"),
+            FastFlagValue::Boolean(b) => write!(f, "{b}"),
+            FastFlagValue::Int(i) => write!(f, "{i}"),
+            FastFlagValue::Uint(i) => write!(f, "{i}"),
+            FastFlagValue::Float(n) => write!(f, "{n}"),
         }
     }
 }
@@ -107,7 +107,7 @@ pub struct FastFlagKeyInsert(pub fn(&mut FastFlagKeyInserter));
 
 #[diagnostic::on_unimplemented(
     message = "{Self} is not a valid type for FastFlagKey",
-    label = "{Self} is not allowed here",
+    label = "not a valid fastflag type",
     note = "only bool, u64, i64, f64 and String are valid types"
 )]
 trait FastFlagAllowedType: Sized {

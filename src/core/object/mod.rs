@@ -17,4 +17,4 @@ pub mod run_service;
 pub use run_service::{FFIsEdit, FFIsRunMode, FFIsStudio, RunServiceMembers};
 
 pub mod service;
-pub use service::{Service, ServiceMembers, DisablingService};
+pub use service::{DisablingService, Service, ServiceMembers};

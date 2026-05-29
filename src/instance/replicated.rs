@@ -1,7 +1,7 @@
-use crate::{core::object::service::DisablingService, internal_prelude::*};
-use mlua::prelude::*;
-use bevy_rblx_derive::register_class;
 use crate::core::object::ServiceMembers;
+use crate::{core::object::service::DisablingService, internal_prelude::*};
+use bevy_rblx_derive::register_class;
+use mlua::prelude::*;
 
 register_class! {
     #[require_components(DisablingService)]

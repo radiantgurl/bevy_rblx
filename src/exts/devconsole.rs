@@ -334,12 +334,8 @@ impl EngineExtension for DevConsoleExtension {
             .remove_resource::<InterpreterThread>()
             .expect("No interpreter thread was removed");
         world.schedule_scope(EguiPrimaryContextPass, |w, s| {
-            s.remove_systems_in_set(
-                ui_commandline,
-                w,
-                ScheduleCleanupPolicy::RemoveSystemsOnly,
-            )
-            .unwrap();
+            s.remove_systems_in_set(ui_commandline, w, ScheduleCleanupPolicy::RemoveSystemsOnly)
+                .unwrap();
         });
     }
 }
