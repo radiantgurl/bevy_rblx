@@ -10,8 +10,8 @@ use bevy::ecs::message::MessageWriter;
 use bevy::{
     DefaultPlugins, MinimalPlugins,
     app::{
-        App, AppExit, AppLabel, FixedUpdate, Last, PluginGroup as _, PostUpdate,
-        PreUpdate, Startup, Update,
+        App, AppExit, AppLabel, FixedUpdate, Last, PluginGroup as _, PostUpdate, PreUpdate,
+        Startup, Update,
     },
     camera::Camera2d,
     ecs::{
@@ -40,7 +40,9 @@ use crate::{
         WorldAccess,
         bevy::ref_counted::RefCountedPlugin,
         extension::{
-            EngineExtension, EngineExtensionDistribution, EngineExtensionInitLevel, EngineExtensions, ext_post_core_init, ext_post_shutdown, ext_pre_shutdown, ext_runtime_init
+            EngineExtension, EngineExtensionDistribution, EngineExtensionInitLevel,
+            EngineExtensions, ext_post_core_init, ext_post_shutdown, ext_pre_shutdown,
+            ext_runtime_init,
         },
         fastflags::FastFlagValue,
         lua::{
@@ -49,7 +51,9 @@ use crate::{
             world_access::WorldAccessDestructor,
         },
         object::{
-            DisabledObject, NewInstanceEvent, RunServiceMembers, data_model::register_game_and_workspace_global, run_service::RunService, service::auto_disable_objects, service_provider::ServiceProviderMembers
+            DisabledObject, NewInstanceEvent, RunServiceMembers,
+            data_model::register_game_and_workspace_global, run_service::RunService,
+            service::auto_disable_objects, service_provider::ServiceProviderMembers,
         },
     },
     enums::{CloseReason, SignalBehavior},
@@ -320,7 +324,7 @@ pub static VERBOSE_FLAG: AtomicU8 = AtomicU8::new(0);
 
 enum EnabledExts {
     Disable(Vec<String>),
-    Enable(Vec<String>)
+    Enable(Vec<String>),
 }
 impl EnabledExts {
     fn should_be_enabled(&self, id: &'static str, default_enable: bool) -> bool {
@@ -373,13 +377,7 @@ impl Engine {
             )
                 .chain(),
         );
-        app.add_systems(
-            FixedUpdate,
-            (
-                RunService::simulation_hook
-            )
-                .chain(),
-        );
+        app.add_systems(FixedUpdate, (RunService::simulation_hook).chain());
         app.add_systems(
             Update,
             (
@@ -402,14 +400,7 @@ impl Engine {
             ),
         );
         if app.world().contains_resource::<Headless>() {
-            app.add_systems(
-                PostUpdate,
-                (
-                    create_provenance,
-                    assign_provenance,
-                )
-                    .chain(),
-            );
+            app.add_systems(PostUpdate, (create_provenance, assign_provenance).chain());
         } else {
             app.add_systems(
                 PostUpdate,
@@ -419,7 +410,7 @@ impl Engine {
                     runservice_event_pre_render,
                     dispatch_synchronized,
                     dispatch_desynchronized,
-                    RunService::render_hook
+                    RunService::render_hook,
                 )
                     .chain(),
             );
@@ -434,7 +425,7 @@ impl Engine {
             level: match VERBOSE_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
                 0 => Level::INFO,
                 1 => Level::DEBUG,
-                _ => Level::TRACE
+                _ => Level::TRACE,
             },
             ..Default::default()
         }));
@@ -450,7 +441,7 @@ impl Engine {
             level: match VERBOSE_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
                 0 => Level::INFO,
                 1 => Level::DEBUG,
-                _ => Level::TRACE
+                _ => Level::TRACE,
             },
             ..Default::default()
         }));
@@ -496,12 +487,9 @@ impl Engine {
         app.world_mut().insert_resource(Headless);
         FAST_FLAGS.store::<FFTaskSchedulerDisableWatchdog>(true);
 
-        app.add_plugins(
-            MinimalPlugins
-                .set(ScheduleRunnerPlugin {
-                    run_mode: RunMode::Loop { wait: None },
-                })
-        );
+        app.add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin {
+            run_mode: RunMode::Loop { wait: None },
+        }));
         let built_system = (
             LocalBuilder(0),
             LocalBuilder(exit_after_frames),
@@ -527,7 +515,9 @@ impl Engine {
         let mut ext_loaders: HashMap<&'static str, Box<dyn EngineExtension>> = HashMap::new();
         for hook in inventory::iter::<crate::core::extension::EngineExtensionHook>() {
             let ext = hook.0();
-            if !enabled_exts.should_be_enabled(ext.id(), ext.default_enabled()) || !ext.distribution().matches(distrib) {
+            if !enabled_exts.should_be_enabled(ext.id(), ext.default_enabled())
+                || !ext.distribution().matches(distrib)
+            {
                 continue;
             }
             if ext.init_level() == EngineExtensionInitLevel::ExtLoader {
@@ -549,7 +539,9 @@ impl Engine {
         }
 
         exts.extend(ext_loaders.into_iter());
-        exts.retain(|id, e| enabled_exts.should_be_enabled(*id, true) && e.distribution().matches(distrib));
+        exts.retain(|id, e| {
+            enabled_exts.should_be_enabled(*id, true) && e.distribution().matches(distrib)
+        });
         for ext in exts.values_mut() {
             ext.engine_build(app);
         }
@@ -569,10 +561,11 @@ impl Engine {
         if let Some(enabled) = args.get_one::<String>("enabled-exts") {
             *enabled_exts = EnabledExts::Enable(enabled.split(",").map(|x| x.to_owned()).collect());
         } else if let Some(disable) = args.get_one::<String>("disable-exts") {
-            *enabled_exts = EnabledExts::Disable(disable.split(",").map(|x| x.to_owned()).collect());
+            *enabled_exts =
+                EnabledExts::Disable(disable.split(",").map(|x| x.to_owned()).collect());
         }
-    }    
-    
+    }
+
     fn parse_fast_flags(args: &ArgMatches) {
         if args.get_flag("fastflags") {
             println!("NAME TYPE DEFAULT");
@@ -713,7 +706,10 @@ impl Engine {
 
         Engine::parse_fast_flags(&args);
 
-        VERBOSE_FLAG.store(args.get_count("debug"), std::sync::atomic::Ordering::Relaxed);
+        VERBOSE_FLAG.store(
+            args.get_count("debug"),
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
         if args.get_flag("headless") {
             app = Engine::headless();

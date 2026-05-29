@@ -109,7 +109,9 @@ fn build_message(s: String, t: &LuaTable) -> LuaResult<String> {
                 new_string.push('{');
             }
             ('}', true) => {
-                new_string += &t.raw_get::<LuaValue>(take(&mut escaped_string))?.to_string()?;
+                new_string += &t
+                    .raw_get::<LuaValue>(take(&mut escaped_string))?
+                    .to_string()?;
                 escape = false;
             }
             (c, false) => new_string.push(c),

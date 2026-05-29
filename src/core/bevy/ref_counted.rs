@@ -4,7 +4,7 @@ use crate::{
     core::{FAST_FLAGS, object::object::DisabledObject},
     internal_prelude::*,
 };
-use bevy::{ecs::system::QueryLens, prelude::*};
+use bevy::{platform::collections::HashSet, prelude::*};
 use std::{
     iter::once,
     sync::{
@@ -19,7 +19,7 @@ use std::{
 #[derive(Default, Reflect)]
 pub struct RefCountedGroup {
     inner: Arc<AtomicU32>,
-    held: AtomicU32,
+    held: u32,
 }
 
 impl PartialEq for RefCountedGroup {
@@ -32,36 +32,35 @@ impl Clone for RefCountedGroup {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
-            held: AtomicU32::new(0),
+            held: 0,
         }
     }
 }
 
 impl RefCountedGroup {
     pub unsafe fn inc(&mut self) -> u32 {
-        *self.held.get_mut() += 1;
+        self.held += 1;
         self.inner.fetch_add(1, Ordering::AcqRel)
     }
     unsafe fn inc_multiple(&mut self, amount: u32) -> u32 {
-        *self.held.get_mut() += 1;
+        self.held += amount;
         self.inner.fetch_add(amount, Ordering::AcqRel)
     }
     pub unsafe fn dec(&mut self) -> u32 {
-        *self.held.get_mut() -= 1;
+        self.held -= 1;
         self.inner.fetch_sub(1, Ordering::AcqRel)
     }
 }
 
 impl Drop for RefCountedGroup {
     fn drop(&mut self) {
-        let refs = *self.held.get_mut();
-        self.inner.fetch_sub(refs, Ordering::AcqRel);
+        self.inner.fetch_sub(self.held, Ordering::AcqRel);
     }
 }
 
 #[derive(Component, Default, Reflect)]
 pub struct RefCounted {
-    count: AtomicU32,
+    count: u32,
     group: Option<RefCountedGroup>,
     protected: bool,
 }
@@ -74,16 +73,18 @@ impl Clone for RefCounted {
 
 impl RefCounted {
     pub unsafe fn inc(&mut self) -> u32 {
-        let r = self.count.fetch_add(1, Ordering::Relaxed)+1;
+        let r = self.count + 1;
+        self.count = r;
         if let Some(x) = self.group.as_mut() {
-            return x.inc();
+            return unsafe { x.inc() };
         }
         r
     }
     pub unsafe fn dec(&mut self) -> u32 {
-        let r = self.count.fetch_sub(1, Ordering::Relaxed)-1;
+        let r = self.count - 1;
+        self.count = r;
         if let Some(x) = self.group.as_mut() {
-            return x.dec();
+            return unsafe { x.dec() };
         }
         r
     }
@@ -91,7 +92,7 @@ impl RefCounted {
         if self.group.is_some() {
             self.group.as_ref().unwrap().inner.load(Ordering::Acquire) == 0
         } else {
-            *self.count.get_mut() == 0
+            self.count == 0
         }
     }
 
@@ -99,40 +100,40 @@ impl RefCounted {
         if self.group.is_some() {
             self.group.as_ref().unwrap().inner.load(Relaxed)
         } else {
-            self.count.load(Relaxed)
+            self.count
         }
     }
     pub fn fetch_count_mut(&mut self) -> u32 {
         if self.group.is_some() {
             self.group.as_ref().unwrap().inner.load(Ordering::Acquire)
         } else {
-            *self.count.get_mut()
+            self.count
         }
     }
 
     pub fn new() -> Self {
         Self {
-            count: AtomicU32::new(0),
+            count: 0,
             group: None,
             protected: false,
         }
     }
     pub fn new_protected() -> Self {
         Self {
-            count: AtomicU32::new(1),
+            count: 1,
             group: None,
             protected: true,
         }
     }
     pub fn protect(&mut self) {
         if !self.protected {
-            *self.count.get_mut() += 1;
+            unsafe { self.inc() };
             self.protected = true;
         }
     }
     pub unsafe fn unprotect(&mut self) {
         if self.protected {
-            *self.count.get_mut() -= 1;
+            unsafe { self.dec() };
             self.protected = false;
         }
     }
@@ -141,7 +142,7 @@ impl RefCounted {
     }
     pub unsafe fn set_group(&mut self, group: Option<RefCountedGroup>) {
         self.group = group;
-        let c = *self.count.get_mut();
+        let c = self.count;
         if let Some(x) = self.group.as_mut() {
             unsafe { x.inc_multiple(c) };
         }
@@ -168,8 +169,8 @@ pub mod commands {
     pub fn dec_ref_command(mut w: EntityWorldMut) -> Result<()> {
         let new_count = unsafe {
             w.get_mut::<RefCounted>()
-            .ok_or_else(|| "not a refcounted")?
-            .dec()
+                .ok_or_else(|| "not a refcounted")?
+                .dec()
         };
         bevy::log::trace!(target: "bevy_rblx::RefCounted", "decrementing ref for {}, new count: {new_count}", w.id());
         Ok(())
@@ -191,13 +192,20 @@ impl<'a> RefCountedEntityCommandsExt for EntityCommands<'a> {
         if VERBOSE_FLAG.load(Ordering::Relaxed) >= 3 {
             use std::backtrace::{Backtrace, BacktraceStatus};
             let bt = Backtrace::capture();
-            match bt.status()  {
+            match bt.status() {
                 BacktraceStatus::Captured => {
                     let bt_str = bt.to_string();
-                    for i in bt_str.split('\n').skip(1).step_by(2).take(9) {
+                    for i in bt_str
+                        .split('\n')
+                        .skip(1)
+                        .step_by(2)
+                        .skip(1)
+                        .take(9)
+                        .filter(|x| !x.contains("rustup") && !x.contains("mlua-"))
+                    {
                         println!("{i}");
                     }
-                },
+                }
                 _ => (),
             }
         }
@@ -208,13 +216,20 @@ impl<'a> RefCountedEntityCommandsExt for EntityCommands<'a> {
         if VERBOSE_FLAG.load(Ordering::Relaxed) >= 3 {
             use std::backtrace::{Backtrace, BacktraceStatus};
             let bt = Backtrace::capture();
-            match bt.status()  {
+            match bt.status() {
                 BacktraceStatus::Captured => {
                     let bt_str = bt.to_string();
-                    for i in bt_str.split('\n').skip(1).step_by(2).take(9) {
+                    for i in bt_str
+                        .split('\n')
+                        .skip(1)
+                        .step_by(2)
+                        .skip(1)
+                        .take(9)
+                        .filter(|x| !x.contains("rustup") && !x.contains("mlua-"))
+                    {
                         println!("{i}");
                     }
-                },
+                }
                 _ => (),
             }
         }
@@ -234,13 +249,14 @@ pub fn refcounted_check_dead(
     for (e, mut r) in q.iter_mut() {
         if r.should_delete_mut() {
             debug_assert!(r.fetch_count_mut() == 0);
-            bevy::log::trace!(target: "bevy_rblx::RefCounted", "deleting entity {e} with {} references ({:?} group refs)", r.count.load(Relaxed), r.group.as_ref().map(|x| x.inner.load(Ordering::Acquire)));
+            bevy::log::trace!(target: "bevy_rblx::RefCounted", "deleting entity {e} with {} references ({:?} group refs)", r.count, r.group.as_ref().map(|x| x.inner.load(Ordering::Acquire)));
             commands.entity(e).detach_all_children().despawn();
         } else {
-            bevy::log::trace!(target: "bevy_rblx::RefCounted", "{e} has {} references ({:?} group refs)", r.count.load(Relaxed), r.group.as_ref().map(|x| x.inner.load(Ordering::Acquire)));
+            bevy::log::trace!(target: "bevy_rblx::RefCounted", "{e} has {} references ({:?} group refs)", r.count, r.group.as_ref().map(|x| x.inner.load(Ordering::Acquire)));
         }
     }
 }
+
 // SAFETY: mut RefCounted assures no entity can be deleted during execution of the group system.
 pub fn assign_refcounted_groups(
     changed_entities: Query<Entity, (Changed<ChildOf>, With<RefCounted>, Allow<DisabledObject>)>,
@@ -248,110 +264,60 @@ pub fn assign_refcounted_groups(
 
     mut refs: Query<&mut RefCounted, Allow<DisabledObject>>,
 
-    mut parent_hierarchy: Query<Ref<ChildOf>, (With<RefCounted>, Allow<DisabledObject>)>,
-    children_hierarchy: Query<&Children, (With<RefCounted>, Allow<DisabledObject>)>,
+    ancestors: Query<&ChildOf, (With<RefCounted>, Allow<DisabledObject>)>,
+    descendants: Query<&Children, (With<RefCounted>, Allow<DisabledObject>)>,
 ) {
-    let changed_entities = changed_entities.iter().collect::<Vec<_>>();
-    for e in changed_entities {
-        let parent = parent_hierarchy.get(e).ok().map(|x| x.0);
-        if let Some(parent) = parent {
-            if !parent_hierarchy.get(e).unwrap().is_added() {
-                let group = match refs
-                    .get(parent)
-                    .expect("queries should match")
-                    .get_group()
-                    .cloned()
-                {
-                    Some(group) => group,
-                    None => {
-                        let g = RefCountedGroup::default();
-                        unsafe { refs.get_mut(parent).unwrap().set_group(Some(g.clone())) };
-                        g
-                    }
+    let mut checked = HashSet::new();
+    for hierarchy in removed_parents.read() {
+        if refs.contains(hierarchy) && !changed_entities.contains(hierarchy) {
+            let hierarchy_group = RefCountedGroup::default();
+            for e in once(hierarchy).chain(descendants.iter_descendants(hierarchy)) {
+                unsafe {
+                    refs.get_mut(e)
+                        .unwrap()
+                        .set_group(Some(hierarchy_group.clone()))
                 };
-                for i in children_hierarchy.iter_descendants(e).chain(once(e)) {
-                    unsafe { refs.get_mut(i).unwrap().set_group(Some(group.clone())) };
-                }
-            } else {
-                let mut lens: QueryLens<&ChildOf, Allow<DisabledObject>> =
-                    parent_hierarchy.transmute_lens_filtered();
-                let parent_hierarchy = lens.query();
-                match (
-                    refs.get(e)
-                        .expect("queries should match")
-                        .get_group()
-                        .cloned(),
-                    refs.get(parent)
-                        .expect("queries should match")
-                        .get_group()
-                        .cloned(),
-                ) {
-                    (None, None) => {
-                        let group = RefCountedGroup::default();
-                        let root_entity = parent_hierarchy.root_ancestor::<ChildOf>(e);
-
-                        for i in children_hierarchy
-                            .iter_descendants(root_entity)
-                            .chain(once(root_entity))
-                        {
-                            unsafe { refs.get_mut(i).unwrap().set_group(Some(group.clone())) };
-                        }
-                    }
-                    (Some(group), None) => {
-                        let root_entity = parent_hierarchy.root_ancestor::<ChildOf>(e);
-
-                        for i in children_hierarchy
-                            .iter_descendants(root_entity)
-                            .chain(once(root_entity))
-                        {
-                            unsafe { refs.get_mut(i).unwrap().set_group(Some(group.clone())) };
-                        }
-                    }
-                    (None, Some(group)) => {
-                        for i in children_hierarchy.iter_descendants(e).chain(once(e)) {
-                            unsafe { refs.get_mut(i).unwrap().set_group(Some(group.clone())) };
-                        }
-                    }
-                    (Some(g1), Some(g2)) => {
-                        // get bigger one
-                        let root_entity;
-                        let group;
-                        if g1 == g2 {
-                            continue;
-                        }
-                        if Arc::strong_count(&g1.inner) > Arc::strong_count(&g2.inner) {
-                            root_entity = parent_hierarchy.root_ancestor::<ChildOf>(parent);
-                            group = g1;
-                        } else {
-                            root_entity = parent_hierarchy.root_ancestor::<ChildOf>(e);
-                            group = g2;
-                        }
-
-                        for i in children_hierarchy
-                            .iter_descendants(root_entity)
-                            .chain(once(root_entity))
-                        {
-                            unsafe { refs.get_mut(i).unwrap().set_group(Some(group.clone())) };
-                        }
-                    }
-                }
             }
-        } else {
         }
     }
-    for e in removed_parents.read() {
-        if !refs.contains(e) {
-            continue;
+
+    'next_hierarchy: for mut hierarchy in changed_entities.iter() {
+        if checked.contains(&hierarchy) {
+            continue 'next_hierarchy;
         }
+        'next_parent: loop {
+            let parent = if let Ok(p) = ancestors.get(hierarchy) {
+                p.0
+            } else {
+                break 'next_parent; // no valid group
+            };
+            let r = if let Ok(r) = refs.get_mut(ancestors.get(hierarchy).unwrap().0) {
+                r
+            } else {
+                break 'next_parent; // no valid group
+            };
+            let group = r.get_group().cloned();
+            drop(r);
 
+            if let Some(group) = group {
+                for e in once(hierarchy).chain(descendants.iter_descendants(hierarchy)) {
+                    checked.insert(e);
+                    unsafe { refs.get_mut(e).unwrap().set_group(Some(group.clone())) };
+                }
+                continue 'next_hierarchy;
+            } else {
+                hierarchy = parent;
+                continue 'next_parent; // try again for a group
+            }
+        }
+        // no valid group was found by this point, create a new one
         let group = RefCountedGroup::default();
-
-        for i in children_hierarchy.iter_descendants(e).chain(once(e)) {
-            unsafe { refs.get_mut(i).unwrap().set_group(Some(group.clone())) };
+        for e in once(hierarchy).chain(descendants.iter_descendants(hierarchy)) {
+            checked.insert(e);
+            unsafe { refs.get_mut(e).unwrap().set_group(Some(group.clone())) };
         }
     }
 }
-
 #[derive(Clone, Copy, Default, Debug, Reflect)]
 pub struct RefCountedPlugin;
 

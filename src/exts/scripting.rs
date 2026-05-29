@@ -158,9 +158,7 @@ fn set_enabled(lua: &Lua, this: Entity, new_value: bool) -> LuaResult<bool> {
         return Ok(true);
     }
     if new_value {
-
     } else {
-
     }
     return Ok(true);
 }
@@ -219,11 +217,11 @@ impl EngineExtension for ScriptingExt {
     fn dyn_clone(&mut self, _app: &mut bevy::app::App) -> Box<dyn EngineExtension> {
         Box::new(Self)
     }
-    
+
     fn name(&self) -> &'static str {
         "Scripting"
     }
-    
+
     fn description(&self) -> Option<&'static str> {
         Some("Adds LuaSourceContainer derived classes")
     }
@@ -231,9 +229,12 @@ impl EngineExtension for ScriptingExt {
     fn runtime_init(&self, world: &mut bevy::ecs::world::World) {
         world.insert_resource(ScriptingLoaded);
     }
-    
+
     fn post_shutdown_hook(&self, world: &mut bevy::ecs::world::World) {
-        let entities = world.query_filtered::<Entity, With<BaseScriptMembers>>().iter(world).collect::<Vec<_>>();
+        let entities = world
+            .query_filtered::<Entity, With<BaseScriptMembers>>()
+            .iter(world)
+            .collect::<Vec<_>>();
         for e in entities {
             world.entity_mut(e).remove::<BaseScriptMembers>();
         }

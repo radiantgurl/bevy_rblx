@@ -117,7 +117,9 @@ impl Drop for ObjectRef {
             };
         } else {
             match &*self.2.lock() {
-                WorldAccessDestructor::None => unreachable!(),
+                WorldAccessDestructor::None => unreachable!(
+                    "Luau container is being destroyed, but not by the world access collector. Failed to lock onto a valid world access destructor."
+                ),
                 WorldAccessDestructor::DestructPhase { commands } => {
                     commands
                         .lock()

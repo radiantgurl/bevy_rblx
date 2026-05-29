@@ -19,30 +19,30 @@ pub enum EngineExtensionDistribution {
     // NOTE: Other extensions with ExtLoader stage cannot see eachother!
     Client,
     Server,
-    Both
+    Both,
 }
 impl EngineExtensionDistribution {
     pub fn client(self) -> bool {
         match self {
             Self::Both | Self::Client => true,
-            Self::Server => false
+            Self::Server => false,
         }
     }
     pub fn server(self) -> bool {
         match self {
             Self::Both | Self::Server => true,
-            Self::Client => false
+            Self::Client => false,
         }
     }
     pub fn matches(self, filter: Self) -> bool {
         match (filter, self) {
-            (EngineExtensionDistribution::Client, EngineExtensionDistribution::Client)  |
-            (EngineExtensionDistribution::Client, EngineExtensionDistribution::Both) |
-            (EngineExtensionDistribution::Server, EngineExtensionDistribution::Server) |
-            (EngineExtensionDistribution::Server, EngineExtensionDistribution::Both) => true,
-            (EngineExtensionDistribution::Server, EngineExtensionDistribution::Client) |
-            (EngineExtensionDistribution::Client, EngineExtensionDistribution::Server) => false,
-            (EngineExtensionDistribution::Both, _) => unimplemented!()
+            (EngineExtensionDistribution::Client, EngineExtensionDistribution::Client)
+            | (EngineExtensionDistribution::Client, EngineExtensionDistribution::Both)
+            | (EngineExtensionDistribution::Server, EngineExtensionDistribution::Server)
+            | (EngineExtensionDistribution::Server, EngineExtensionDistribution::Both) => true,
+            (EngineExtensionDistribution::Server, EngineExtensionDistribution::Client)
+            | (EngineExtensionDistribution::Client, EngineExtensionDistribution::Server) => false,
+            (EngineExtensionDistribution::Both, _) => unimplemented!(),
         }
     }
 }
@@ -63,8 +63,10 @@ pub trait EngineExtension: 'static + Send + Sync {
     fn dynamically_removable(&self) -> bool {
         false
     }
-    fn default_enabled(&self) -> bool { true }
-    
+    fn default_enabled(&self) -> bool {
+        true
+    }
+
     fn dyn_clone(&mut self, app: &mut App) -> Box<dyn EngineExtension>; // NOTE: This is only done when an integrated server is requested,
 
     fn ext_load(

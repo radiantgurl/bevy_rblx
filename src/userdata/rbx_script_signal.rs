@@ -61,12 +61,12 @@ pub enum InnerRBXScriptConnection {
     Native {
         signal: LuaValue,
         id: usize,
-        pd: bool
+        pd: bool,
     },
     Custom {
         disconnect_fn: LuaFunction,
-        is_connected_fn: LuaFunction
-    }
+        is_connected_fn: LuaFunction,
+    },
 }
 
 #[derive(Clone, FromLua)]
@@ -100,7 +100,7 @@ impl RBXScriptSignalSingle {
         self.count += 1;
         self.parallel_dispatch.insert(count, func);
         self.identities.insert(count, ThreadIdentity::fetch(lua));
-        Ok(RBXScriptConnection(InnerRBXScriptConnection::Native  {
+        Ok(RBXScriptConnection(InnerRBXScriptConnection::Native {
             signal: this_userdata.into_lua(lua)?,
             id: count,
             pd: false,
@@ -114,7 +114,7 @@ impl RBXScriptSignalSingle {
     ) -> LuaResult<RBXScriptConnection> {
         let count = self.count;
         self.count += 1;
-        let conn = RBXScriptConnection(InnerRBXScriptConnection::Native  {
+        let conn = RBXScriptConnection(InnerRBXScriptConnection::Native {
             signal: this_userdata.into_lua(lua)?,
             id: count,
             pd: false,
@@ -222,7 +222,7 @@ impl LuaUserData for RBXScriptConnection {
     }
 
     fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
-        methods.add_method("Disconnect", move |_lua: &Lua, this, ()| this.disconnect() );
+        methods.add_method("Disconnect", move |_lua: &Lua, this, ()| this.disconnect());
     }
 }
 
@@ -404,13 +404,20 @@ impl RBXScriptConnection {
             weak_lua: lua.weak(),
         })
     }
-    pub fn new_custom(is_connected_fn: LuaFunction, disconnect_fn: LuaFunction) -> RBXScriptConnection {
-        RBXScriptConnection(InnerRBXScriptConnection::Custom { disconnect_fn, is_connected_fn })
+    pub fn new_custom(
+        is_connected_fn: LuaFunction,
+        disconnect_fn: LuaFunction,
+    ) -> RBXScriptConnection {
+        RBXScriptConnection(InnerRBXScriptConnection::Custom {
+            disconnect_fn,
+            is_connected_fn,
+        })
     }
     pub fn disconnect(&self) -> LuaResult<()> {
         match &self.0 {
             InnerRBXScriptConnection::Native { signal, id, pd } => {
-                let mut signal: LuaUserDataRefMut<RBXScriptSignalSingle> = signal.borrow_typed_mut().unwrap();
+                let mut signal: LuaUserDataRefMut<RBXScriptSignalSingle> =
+                    signal.borrow_typed_mut().unwrap();
                 if *pd {
                     signal.parallel_dispatch.remove(id);
                 } else {
@@ -418,23 +425,28 @@ impl RBXScriptConnection {
                 }
                 signal.identities.remove(id);
                 Ok(())
-            },
+            }
             InnerRBXScriptConnection::Custom { disconnect_fn, .. } => disconnect_fn.call(()),
         }
     }
     pub fn is_connected(&self) -> LuaResult<bool> {
         match &self.0 {
-            InnerRBXScriptConnection::Native { signal: this_signal, pd, id } => {
-                let signal: LuaUserDataRef<RBXScriptSignalSingle> = this_signal.borrow_typed().unwrap();
+            InnerRBXScriptConnection::Native {
+                signal: this_signal,
+                pd,
+                id,
+            } => {
+                let signal: LuaUserDataRef<RBXScriptSignalSingle> =
+                    this_signal.borrow_typed().unwrap();
                 Ok(if *pd {
                     signal.parallel_dispatch.get(id).is_some()
                 } else {
                     signal.dispatch.get(id).is_some()
                 })
-            },
-            InnerRBXScriptConnection::Custom { is_connected_fn, .. } => {
-                is_connected_fn.call(())
-            },
+            }
+            InnerRBXScriptConnection::Custom {
+                is_connected_fn, ..
+            } => is_connected_fn.call(()),
         }
     }
 }

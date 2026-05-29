@@ -1,6 +1,6 @@
+use crate::core::lua::{CachedLuaFunction, callback::LuaPrioCallbackTableCached};
 use crate::core::object::service::DisablingService;
 use crate::core::{Headless, TaskScheduler};
-use crate::core::lua::{callback::LuaPrioCallbackTableCached, CachedLuaFunction};
 use crate::enums::{PredictionMode, PredictionStatus, RunState, StepFrequency};
 use crate::internal_prelude::*;
 use bevy::ecs::entity::Entity;
@@ -20,7 +20,9 @@ const SIMULATION_IS_CONNECTED: CachedLuaFunction = {
         let wa = WorldAccess::fetch_readonly(lua);
         let world = wa.access_read_only();
 
-        Ok(RunServiceMembers::fetch_members(&*world, this.entity()).simulation_callbacks.contains(id))
+        Ok(RunServiceMembers::fetch_members(&*world, this.entity())
+            .simulation_callbacks
+            .contains(id))
     }
     fn create_fn(lua: &Lua) -> LuaFunction {
         lua.create_function(simulation_is_connected).unwrap()
@@ -139,7 +141,7 @@ register_class! {
             let mut wa = WorldAccess::fetch(lua);
             let world = wa.access_synchronized()?;
             let mut members = RunServiceMembers::fetch_members_mut(world, this.entity());
-            
+
             let id = members.simulation_callbacks.insert(lua, priority, func, freq)?;
 
             drop(members);
@@ -165,15 +167,21 @@ register_class! {
 impl RunService {
     pub(in crate::core) fn simulation_hook(w: &mut World, mut frame_count: Local<u8>) {
         let dt = w.resource::<Time<Fixed>>().delta_secs_f64();
-        let run_service = w.query_filtered::<Entity, With<RunServiceMembers>>().single(w).unwrap();
-        for (lua, func, freq) in RunServiceMembers::fetch_members_mut(w, run_service).simulation_callbacks.get_callbacks_cached() {
+        let run_service = w
+            .query_filtered::<Entity, With<RunServiceMembers>>()
+            .single(w)
+            .unwrap();
+        for (lua, func, freq) in RunServiceMembers::fetch_members_mut(w, run_service)
+            .simulation_callbacks
+            .get_callbacks_cached()
+        {
             let should_run = match freq {
                 StepFrequency::Hz60 => true,
-                StepFrequency::Hz30 => (*frame_count)%2==0,
-                StepFrequency::Hz15 => (*frame_count)%4==0,
-                StepFrequency::Hz10 => (*frame_count)%6==0,
-                StepFrequency::Hz5 => (*frame_count)%12==0,
-                StepFrequency::Hz1 => (*frame_count)%60==0,
+                StepFrequency::Hz30 => (*frame_count) % 2 == 0,
+                StepFrequency::Hz15 => (*frame_count) % 4 == 0,
+                StepFrequency::Hz10 => (*frame_count) % 6 == 0,
+                StepFrequency::Hz5 => (*frame_count) % 12 == 0,
+                StepFrequency::Hz1 => (*frame_count) % 60 == 0,
             };
             if should_run {
                 unsafe {
@@ -183,20 +191,28 @@ impl RunService {
                 WorldAccess::fetch(&lua).clear_sync_access(w);
             }
         }
-        *frame_count = (*frame_count + 1)%60;
+        *frame_count = (*frame_count + 1) % 60;
     }
     pub(in crate::core) fn render_hook(w: &mut World, mut frame_count: Local<u8>) {
-        if w.get_resource::<Headless>().is_some() {return;}
+        if w.get_resource::<Headless>().is_some() {
+            return;
+        }
         let dt = w.resource::<Time<Fixed>>().delta_secs_f64();
-        let run_service = w.query_filtered::<Entity, With<RunServiceMembers>>().single(w).unwrap();
-        for (lua, func, _) in RunServiceMembers::fetch_members_mut(w, run_service).render_callbacks.get_callbacks_cached() {
+        let run_service = w
+            .query_filtered::<Entity, With<RunServiceMembers>>()
+            .single(w)
+            .unwrap();
+        for (lua, func, _) in RunServiceMembers::fetch_members_mut(w, run_service)
+            .render_callbacks
+            .get_callbacks_cached()
+        {
             unsafe {
                 WorldAccess::fetch(&lua).insert_sync_access(w);
             }
             TaskScheduler::fetch(&lua).spawn(&lua, func, dt).unwrap();
             WorldAccess::fetch(&lua).clear_sync_access(w);
         }
-        *frame_count = (*frame_count + 1)%60;
+        *frame_count = (*frame_count + 1) % 60;
     }
 }
 
