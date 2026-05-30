@@ -2,6 +2,7 @@ mod base_script;
 mod folder;
 mod model;
 mod workspace;
+mod values;
 
 pub use base_script::{
     BaseScript, BaseScriptMembers, LuaSourceContainer, LuaSourceContainerMembers,
