@@ -7,7 +7,10 @@ use syn::{
 };
 use utils::camel_case_to_snake_case;
 
-use crate::{parse::{ClassArgs, ReflectType}, utils::snake_case_to_camel_case};
+use crate::{
+    parse::{ClassArgs, ReflectType},
+    utils::snake_case_to_camel_case,
+};
 
 mod parse;
 mod utils;
@@ -164,6 +167,7 @@ pub fn lua_enum(
                 fields.add_field_method_get("Name", |_, this| Ok(match (this) {
                     #(#variant_quotes_names_only),*
                 }));
+                fields.add_field("Origin", stringify!(#name));
                 fields.add_field_method_get("Value", |_, this| Ok(*this as i16));
 
             }
@@ -205,6 +209,7 @@ pub fn lua_enum(
             }
             fn add_fields<F: LuaUserDataFields<Self>>(fields: &mut F) {
                 fields.add_meta_field("__type", "Enum");
+                fields.add_field("ENUM_NAME",stringify!(#name));
                 #(#variant_fields)*
             }
         }
@@ -471,8 +476,11 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
         let struct_spanned = {
             let (reflect_derive, reflect_attr) = match &args.reflect_type {
                 Some(ReflectType::NoReflect) => (quote! {}, quote! {}),
-                Some(ReflectType::Opaque(x)) => (quote_spanned! {x.span() => , bevy_rblx::internal::Reflect}, quote_spanned! {x.span() => #[reflect(opaque)]}),
-                None => (quote! {, bevy_rblx::internal::Reflect}, quote! {})
+                Some(ReflectType::Opaque(x)) => (
+                    quote_spanned! {x.span() => , bevy_rblx::internal::Reflect},
+                    quote_spanned! {x.span() => #[reflect(opaque)]},
+                ),
+                None => (quote! {, bevy_rblx::internal::Reflect}, quote! {}),
             };
             let derive = quote_spanned! { args.members_token.span() =>
                 #[derive(Clone, bevy_rblx::internal::Component #reflect_derive)]

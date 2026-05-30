@@ -7,7 +7,7 @@ pub(crate) mod logs;
 pub mod lua;
 pub mod object;
 
-pub use engine::{Engine, FFShutdownTimeout, Headless, ShutdownReason};
+pub use engine::{Engine, FFShutdownTimeout, Headless, SchedulerPhase, ShutdownReason};
 pub use fastflags::{FAST_FLAGS, FastFlagKey, FastFlagType, FastFlagValue, FastFlags};
 pub use internal_prelude::IntoLuaThread;
 pub use logs::{LoggedMessage, RblxLogs, push_log, push_lua_error};

@@ -19,7 +19,7 @@ use bevy::{
         message::{MessageReader, Messages},
         query::Allow,
         resource::Resource,
-        schedule::{IntoScheduleConfigs, Schedule},
+        schedule::{IntoScheduleConfigs, Schedule, SystemSet},
         system::{Commands, Local},
         world::{CommandQueue, World},
     },
@@ -320,6 +320,22 @@ create_runservice_trigger!(stepped);
 #[derive(AppLabel, Clone, Copy, Hash, Debug, Default, PartialEq, Eq)]
 pub struct IntegratedServer;
 
+#[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, PartialOrd, Ord, SystemSet)]
+#[repr(u8)]
+pub enum SchedulerPhase {
+    ReplicationRecv,
+    PreAnimation,
+    HumanoidStep,
+    PreSimulation,
+    StepSimulation,
+    PostSimulation,
+    PreHeartbeat,
+    Heartbeat,
+    ReplicationSend,
+    Input,
+    PreRender,
+}
+
 pub static VERBOSE_FLAG: AtomicU8 = AtomicU8::new(0);
 
 enum EnabledExts {
@@ -366,37 +382,65 @@ impl Engine {
         app.add_systems(
             PreUpdate,
             (
-                auto_disable_objects,
-                runservice_event_pre_animation,
-                dispatch_synchronized,
-                dispatch_desynchronized,
-                runservice_event_pre_simulation,
-                runservice_event_stepped,
-                dispatch_synchronized,
-                dispatch_desynchronized,
-            )
-                .chain(),
+                (
+                    auto_disable_objects,
+                    runservice_event_pre_animation,
+                    dispatch_synchronized,
+                    dispatch_desynchronized,
+                )
+                    .chain()
+                    .in_set(SchedulerPhase::PreAnimation)
+                    .after(SchedulerPhase::ReplicationRecv),
+                (
+                    runservice_event_pre_simulation,
+                    runservice_event_stepped,
+                    dispatch_synchronized,
+                    dispatch_desynchronized,
+                )
+                    .chain()
+                    .in_set(SchedulerPhase::PreSimulation)
+                    .after(SchedulerPhase::PreAnimation),
+            ),
         );
-        app.add_systems(FixedUpdate, (RunService::simulation_hook).chain());
+        app.add_systems(
+            FixedUpdate,
+            (RunService::simulation_hook)
+                .in_set(SchedulerPhase::StepSimulation)
+                .after(SchedulerPhase::PreSimulation),
+        );
         app.add_systems(
             Update,
             (
                 register_game_and_workspace_global,
                 (
-                    runservice_event_post_simulation,
-                    dispatch_synchronized,
-                    dispatch_desynchronized,
-                    create_provenance,
-                    assign_provenance,
-                    run_synchronized.after(register_game_and_workspace_global),
-                    run_desynchronized,
-                    create_provenance,
-                    assign_provenance,
-                    runservice_event_heartbeat,
-                    dispatch_synchronized,
-                    dispatch_desynchronized,
-                )
-                    .chain(),
+                    (
+                        runservice_event_post_simulation,
+                        dispatch_synchronized,
+                        dispatch_desynchronized,
+                    )
+                        .chain()
+                        .in_set(SchedulerPhase::PostSimulation)
+                        .after(SchedulerPhase::StepSimulation),
+                    (
+                        create_provenance,
+                        assign_provenance,
+                        run_synchronized.after(register_game_and_workspace_global),
+                        run_desynchronized,
+                    )
+                        .chain()
+                        .in_set(SchedulerPhase::PreHeartbeat)
+                        .after(SchedulerPhase::PostSimulation),
+                    (
+                        create_provenance,
+                        assign_provenance,
+                        runservice_event_heartbeat,
+                        dispatch_synchronized,
+                        dispatch_desynchronized,
+                    )
+                        .chain()
+                        .in_set(SchedulerPhase::Heartbeat)
+                        .after(SchedulerPhase::PreHeartbeat),
+                ),
             ),
         );
         if app.world().contains_resource::<Headless>() {
@@ -412,7 +456,11 @@ impl Engine {
                     dispatch_desynchronized,
                     RunService::render_hook,
                 )
-                    .chain(),
+                    .chain()
+                    .in_set(SchedulerPhase::PreRender)
+                    .after(SchedulerPhase::Heartbeat)
+                    .after(SchedulerPhase::ReplicationSend)
+                    .after(SchedulerPhase::Input),
             );
         }
         app.add_systems(Last, (bind_close_system_runner, erase_provenance));

@@ -103,6 +103,18 @@ impl TaskScheduler {
         task.defer_next_threads[pd].push((t.clone(), values.into_lua_multi(lua)?));
         Ok(t)
     }
+    pub fn defer_next_frame_custom_pd(
+        &self,
+        lua: &Lua,
+        t: impl IntoLuaThread,
+        values: impl IntoLuaMulti,
+        pd: bool,
+    ) -> LuaResult<LuaThread> {
+        let mut task = self.cell.borrow_mut();
+        let t = t.into_lua_thread(lua)?;
+        task.defer_next_threads[pd as usize].push((t.clone(), values.into_lua_multi(lua)?));
+        Ok(t)
+    }
 
     pub fn delay(
         &self,

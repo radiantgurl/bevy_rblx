@@ -5,6 +5,7 @@ mod lua_free_value;
 mod object;
 mod rbx_script_signal;
 mod r#typeof;
+mod vector2;
 mod vector3;
 
 pub use cframe::CFrame;
@@ -14,6 +15,7 @@ pub use object::ObjectRef;
 pub use rbx_script_signal::{
     FFSignalBehavior, LuaSendRBXScriptConnection, RBXScriptConnection, RBXScriptSignal,
 };
+pub use vector2::Vector2;
 pub use vector3::Vector3;
 
 pub use instance::instance_new;

@@ -655,7 +655,7 @@ register_class! {
             match ancestors.len() {
                 0 | 1 => Ok(world.get::<Name>(this.entity()).unwrap().to_string()),
                 _ => {
-                    let v = ancestors.into_iter().skip(1).map(|x| world.get::<Name>(x).unwrap().as_str()).collect::<Vec<_>>();
+                    let v = ancestors.into_iter().rev().chain(std::iter::once(this.entity())).skip(1).map(|x| world.get::<Name>(x).unwrap().as_str()).collect::<Vec<_>>();
                     Ok(v.join("."))
                 }
             }

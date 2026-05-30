@@ -1,20 +1,28 @@
-use bevy::ecs::entity::Entity;
+use bevy::app::Update;
+use bevy::ecs::entity::{ContainsEntity, Entity};
 use bevy::ecs::hierarchy::ChildOf;
-use bevy::ecs::query::{Allow, With};
+use bevy::ecs::lifecycle::RemovedComponents;
+use bevy::ecs::query::{Added, Allow, With, Without};
 use bevy::ecs::resource::Resource;
+use bevy::ecs::schedule::IntoScheduleConfigs;
+use bevy::ecs::system::{Commands, Query};
+use bevy::ecs::world::World;
 use bevy::platform::collections::HashMap;
 use bevy_rblx_derive::{cached_lua_function, fast_flag, register, register_class};
 use mlua::prelude::*;
 
 use crate::core::extension::{EngineExtensionDistribution, EngineExtensionInitLevel};
 use crate::core::lua::{FFLuauDefaultJit, LuaSingleton};
-use crate::core::object::{DisabledObject, Instance, ObjectHeader};
+use crate::core::object::{DisabledObject, FFIsEdit, Instance, ObjectHeader, RootInstance};
 use crate::core::{FAST_FLAGS, object::InstanceMembers};
 use crate::enums::RunContext;
-use crate::internal::{CachedLuaFunction, EngineExtension};
+use crate::internal::EngineExtension;
 use crate::internal_prelude::*;
 
-use crate::core::{ContainerProvenance, TaskScheduler, WorldAccess};
+use crate::core::{
+    ContainerProvenance, Headless, LuauContainer, SchedulerPhase, TaskScheduler, ThreadIdentity,
+    WorldAccess,
+};
 use crate::userdata::ObjectRef;
 
 register_class! {
@@ -148,14 +156,106 @@ impl LuaSingleton for ModuleScript {
 fn disable_basescript(lua: &Lua, this: ObjectRef) -> LuaResult<()> {
     let mut wa = WorldAccess::fetch(lua);
     let world = wa.access_synchronized()?;
+    let threads = ThreadIdentity::get_threads(lua, this.entity());
+    let task = TaskScheduler::fetch(lua);
+    for i in threads {
+        task.cancel(lua, i)?;
+    }
+    world
+        .get_mut::<BaseScriptMembers>(this.entity())
+        .unwrap()
+        .started = false;
+    if let Some(mut p) = world.get_mut::<ContainerProvenance>(this.entity()) {
+        p.internally_managed = false;
+        drop(p);
+        let _ = world.modify_component::<ChildOf, ()>(this.entity(), |_| ()); // Update ChildOf to ensure container provenance is rechecked
+    }
     Ok(())
 }
 #[cached_lua_function]
 fn enable_basescript(lua: &Lua, this: ObjectRef) -> LuaResult<()> {
     let mut wa = WorldAccess::fetch(lua);
     let world = wa.access_synchronized()?;
-    BaseScriptMembers::fetch_members_mut(world, this.entity());
+    let is_server = world.contains_resource::<Headless>();
+    let is_plugin = FAST_FLAGS.fetch::<FFIsEdit>();
+    let script_is_client = world.get::<LocalScriptMembers>(this.entity()).is_some();
+    {
+        let c = world.get::<ContainerProvenance>(this.entity()).unwrap();
+        let c = world.get::<LuauContainer>(c.entity).unwrap();
+        assert!(
+            c.lua.weak() == lua.weak(),
+            "mismatch detected while trying to enable a script"
+        );
+    }
+    let mut members = BaseScriptMembers::fetch_members_mut(world, this.entity());
+    match members.run_context {
+        RunContext::Legacy => {
+            if !(script_is_client ^ is_server) {
+                return Ok(());
+            }
+        }
+        RunContext::Server => {
+            if !is_server {
+                return Ok(());
+            }
+        }
+        RunContext::Client => {
+            if is_server || is_plugin {
+                return Ok(());
+            }
+        }
+        RunContext::Plugin => {
+            if !is_plugin {
+                return Ok(());
+            }
+        }
+    }
+    if members.started {
+        return Ok(());
+    }
+    members.started = true;
+    drop(members);
+    let source = LuaSourceContainerMembers::fetch_members(world, this.entity())
+        .source
+        .clone();
+    drop(wa);
+    let path = Instance::get_full_name(lua, (this.clone_lua(lua),))?;
+    let f = create_lua_function(lua, source, path, this.entity())?;
+    TaskScheduler::fetch(lua).defer_next_frame(lua, f, ())?;
     Ok(())
+}
+
+fn get_provenance_for_enabling_script(this: Entity, world: &mut World) -> Lua {
+    if let Some(mut x) = world.get_mut::<ContainerProvenance>(this.entity()) {
+        x.internally_managed = true;
+        let e = x.entity;
+        drop(x);
+        world.get::<LuauContainer>(e).unwrap().lua.clone()
+    } else {
+        // find first container
+        let mut ancestors_qs = world.query_filtered::<&ChildOf, Allow<DisabledObject>>();
+        let mut new_lua = None;
+        let mut container_entity = None;
+        for parent in ancestors_qs.query(world).iter_ancestors(this.entity()) {
+            if let Some(container) = world.get::<LuauContainer>(parent) {
+                new_lua = Some(container.lua.clone());
+                container_entity = Some(parent);
+                break;
+            }
+        }
+        if new_lua.is_none() {
+            // use the game at this point istg
+            let mut root = world.query_filtered::<(Entity, &LuauContainer), With<RootInstance>>();
+            let root = root.single(world).unwrap();
+            new_lua = Some(root.1.lua.clone());
+            container_entity = Some(root.0);
+        }
+        world.entity_mut(this.entity()).insert(ContainerProvenance {
+            entity: container_entity.unwrap(),
+            internally_managed: true,
+        });
+        new_lua.unwrap()
+    }
 }
 
 fn set_enabled(lua: &Lua, this: Entity, new_value: bool) -> LuaResult<bool> {
@@ -168,19 +268,21 @@ fn set_enabled(lua: &Lua, this: Entity, new_value: bool) -> LuaResult<bool> {
     members.enabled = new_value;
     let started = members.started;
     drop(members);
-    if started == new_value {
+    if started == new_value || world.get::<DisabledObject>(this.entity()).is_some() {
         return Ok(true);
     }
+    let new_lua = get_provenance_for_enabling_script(this, world);
+    drop(wa);
     if new_value {
-        TaskScheduler::fetch(lua).defer(
-            lua,
-            ENABLE_BASESCRIPT.fetch(lua),
+        TaskScheduler::fetch(&new_lua).defer(
+            &new_lua,
+            ENABLE_BASESCRIPT.fetch(&new_lua),
             ObjectRef::new(lua, this),
         )?;
     } else {
-        TaskScheduler::fetch(lua).defer(
-            lua,
-            DISABLE_BASESCRIPT.fetch(lua),
+        TaskScheduler::fetch(&new_lua).defer(
+            &new_lua,
+            DISABLE_BASESCRIPT.fetch(&new_lua),
             ObjectRef::new(lua, this),
         )?;
     }
@@ -219,8 +321,70 @@ register_class! {
     methods {}
 }
 
+register_class! {
+    Script(BaseScript)
+    members {}
+    methods {}
+}
+
+register_class! {
+    LocalScript(Script)
+    members {}
+    methods {}
+}
+
 #[derive(Default, Resource)]
 struct ScriptingLoaded;
+
+fn script_enable_disable(
+    mut commands: Commands,
+
+    just_enabled: Query<Entity, (Without<DisabledObject>, With<BaseScriptMembers>)>,
+    mut removed_disabled_object: RemovedComponents<DisabledObject>,
+    just_disabled: Query<Entity, (Added<DisabledObject>, With<BaseScriptMembers>)>,
+
+    members: Query<&BaseScriptMembers, Allow<DisabledObject>>,
+) {
+    for e in removed_disabled_object.read() {
+        if just_enabled.contains(e) && members.get(e).unwrap().enabled {
+            // schedule for enabling
+            commands.queue(move |w: &mut World| {
+                let lua = get_provenance_for_enabling_script(e, w);
+                unsafe {
+                    w.entity_mut(e).inc_ref();
+                }
+                TaskScheduler::fetch(&lua)
+                    .defer_next_frame_custom_pd(
+                        &lua,
+                        ENABLE_BASESCRIPT.fetch(&lua),
+                        unsafe { ObjectRef::new_no_inc_ref(&lua, e) },
+                        false,
+                    )
+                    .unwrap();
+            });
+        }
+    }
+    for e in just_disabled.iter() {
+        let m = members.get(e).unwrap();
+        if m.started {
+            // schedule for disabling
+            commands.queue(move |w: &mut World| {
+                let lua = get_provenance_for_enabling_script(e, w);
+                unsafe {
+                    w.entity_mut(e).inc_ref();
+                }
+                TaskScheduler::fetch(&lua)
+                    .defer_next_frame_custom_pd(
+                        &lua,
+                        DISABLE_BASESCRIPT.fetch(&lua),
+                        unsafe { ObjectRef::new_no_inc_ref(&lua, e) },
+                        false,
+                    )
+                    .unwrap();
+            });
+        }
+    }
+}
 
 #[derive(Default, Clone)]
 struct ScriptingExt;
@@ -252,6 +416,9 @@ impl EngineExtension for ScriptingExt {
 
     fn runtime_init(&self, world: &mut bevy::ecs::world::World) {
         world.insert_resource(ScriptingLoaded);
+        world.schedule_scope(Update, |_, s| {
+            s.add_systems(script_enable_disable.before(SchedulerPhase::PreHeartbeat));
+        });
     }
 
     fn post_shutdown_hook(&self, world: &mut bevy::ecs::world::World) {

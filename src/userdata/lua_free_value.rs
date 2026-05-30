@@ -1,4 +1,7 @@
-use crate::userdata::{CFrame, ObjectRef, Vector3};
+use crate::{
+    enums::LuaEnums,
+    userdata::{CFrame, ObjectRef, Vector2, Vector3},
+};
 
 use bevy::{math::Vec3, reflect::Reflect};
 use mlua::{
@@ -19,7 +22,11 @@ pub enum LuaFreeValue {
     Object(ObjectRef),
     CFrame(CFrame),
     Vector3(Vector3),
+    Vector2(Vector2),
     Buffer(Vec<u8>),
+    EnumItem(String, String),
+    Enum(String),
+    Enums,
 }
 
 impl FromLua for LuaFreeValue {
@@ -44,22 +51,29 @@ impl FromLua for LuaFreeValue {
                 Err(LuaError::runtime("cannot convert thread to lua free value"))
             }
             LuaValue::UserData(any_user_data) => {
-                if let Ok(o) = any_user_data.borrow::<ObjectRef>() {
-                    Ok(LuaFreeValue::Object(o.clone_lua(lua)))
-                } else if let Ok(o) = any_user_data.borrow::<CFrame>() {
-                    Ok(LuaFreeValue::CFrame(*o))
-                } else if let Ok(o) = any_user_data.borrow::<Vector3>() {
-                    Ok(LuaFreeValue::Vector3(*o))
-                } else {
-                    if let Some(type_name) = any_user_data.type_name()? {
-                        todo!(
-                            "serializing to free value not implemented for userdata type {type_name}"
-                        )
-                    } else {
-                        todo!(
-                            "serializing to free value not implemented for userdata type <unknown>"
-                        )
+                let type_name = any_user_data.type_name()?.ok_or_else(|| {
+                    LuaError::runtime("serializing to free value not implemented for unknown type")
+                })?;
+                match type_name.as_str() {
+                    "Instance" | "Object" => Ok(LuaFreeValue::Object(
+                        any_user_data.borrow::<ObjectRef>()?.clone_lua(lua),
+                    )),
+                    "CFrame" => Ok(LuaFreeValue::CFrame(*any_user_data.borrow::<CFrame>()?)),
+                    "Vector3" => Ok(LuaFreeValue::Vector3(*any_user_data.borrow::<Vector3>()?)),
+                    "Vector2" => Ok(LuaFreeValue::Vector2(*any_user_data.borrow::<Vector2>()?)),
+                    "EnumItem" => {
+                        let origin = any_user_data.get::<String>("Origin")?;
+                        let value = any_user_data.get::<String>("Name")?;
+                        Ok(LuaFreeValue::EnumItem(origin, value))
                     }
+                    "Enum" => {
+                        let origin = any_user_data.get::<String>("ENUM_NAME")?;
+                        Ok(LuaFreeValue::Enum(origin))
+                    }
+                    "Enums" => Ok(LuaFreeValue::Enums),
+                    _ => todo!(
+                        "serializing to free value not implemented for userdata type {type_name}"
+                    ),
                 }
             }
             LuaValue::Buffer(buffer) => Ok(LuaFreeValue::Buffer(buffer.to_vec())),
@@ -82,6 +96,18 @@ impl IntoLua for LuaFreeValue {
             LuaFreeValue::Buffer(items) => Ok(LuaValue::Buffer(lua.create_buffer(items)?)),
             LuaFreeValue::CFrame(cframe) => cframe.into_lua(lua),
             LuaFreeValue::Vector3(vector3) => vector3.into_lua(lua),
+            LuaFreeValue::Vector2(vector2) => vector2.into_lua(lua),
+            LuaFreeValue::EnumItem(origin, value) => {
+                let enums = LuaEnums.into_lua(lua)?;
+                let enums_ud = enums.as_userdata().unwrap();
+                enums_ud.get_path::<LuaValue>(format!("{origin}.{value}").as_str())
+            }
+            LuaFreeValue::Enum(origin) => {
+                let enums = LuaEnums.into_lua(lua)?;
+                let enums_ud = enums.as_userdata().unwrap();
+                enums_ud.get::<LuaValue>(origin.as_str())
+            }
+            LuaFreeValue::Enums => LuaEnums.into_lua(lua),
         }
     }
 }
@@ -99,6 +125,18 @@ impl IntoLua for &LuaFreeValue {
             LuaFreeValue::Buffer(items) => Ok(LuaValue::Buffer(lua.create_buffer(items)?)),
             LuaFreeValue::CFrame(cframe) => (*cframe).into_lua(lua),
             LuaFreeValue::Vector3(vector3) => (*vector3).into_lua(lua),
+            LuaFreeValue::Vector2(vector2) => (*vector2).into_lua(lua),
+            LuaFreeValue::EnumItem(origin, value) => {
+                let enums = LuaEnums.into_lua(lua)?;
+                let enums_ud = enums.as_userdata().unwrap();
+                enums_ud.get_path::<LuaValue>(format!("{origin}.{value}").as_str())
+            }
+            LuaFreeValue::Enum(origin) => {
+                let enums = LuaEnums.into_lua(lua)?;
+                let enums_ud = enums.as_userdata().unwrap();
+                enums_ud.get::<LuaValue>(origin.as_str())
+            }
+            LuaFreeValue::Enums => LuaEnums.into_lua(lua),
         }
     }
 }
