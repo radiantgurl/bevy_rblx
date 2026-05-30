@@ -90,7 +90,11 @@ pub async fn interpreter(lua: Lua, (): ()) -> LuaResult<()> {
         })?,
     )?;
     loop {
-        let e = lua.yield_with::<String>(()).await.expect("Failed to convert value to string, an error has occured while resuming this");
+        let e = lua.yield_with::<LuaValue>(()).await?;
+        if !e.is_string() {
+            continue;
+        }
+        let e = e.to_string()?;
         println!("> {e}");
 
         TaskScheduler::fetch(&lua).defer_custom_pd(
