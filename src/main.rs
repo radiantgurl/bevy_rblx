@@ -38,6 +38,8 @@ pub mod internal {
     pub use crate::core::lua::singleton::SingletonRegisterFn;
 
     pub use static_assertions::assert_impl_all;
+    pub use bevy::reflect::Reflect;
+    pub use bevy::ecs::component::Component;
 }
 
 pub(crate) use core::internal_prelude;

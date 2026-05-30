@@ -9,6 +9,8 @@ use syn::{
     token::{Brace, Bracket, Paren},
 };
 
+use crate::parse::kw::reflect_opaque;
+
 #[derive(Debug, Clone)]
 pub(crate) struct CodeBlock {
     pub block: TokenStream,
@@ -208,6 +210,8 @@ mod kw {
     custom_keyword!(custom_getter);
     custom_keyword!(post_init);
     custom_keyword!(str);
+    custom_keyword!(no_reflect);
+    custom_keyword!(reflect_opaque);
 
     #[derive(Clone, Copy)]
     pub(crate) struct End;
@@ -778,6 +782,7 @@ pub(crate) struct ObjectField {
     pub security: Option<Ident>,
     pub default: Option<syn::Expr>,
     pub read_only: Option<kw::read_only>,
+    pub reflect_opaque: Option<kw::reflect_opaque>,
     pub deprecated_aliases: Vec<LitStr>,
 
     pub visibility: Visibility,
@@ -796,6 +801,7 @@ impl Parse for ObjectField {
         let mut security = None;
         let mut default = None;
         let mut read_only = None;
+        let mut reflect_opaque = None;
         let mut deprecated_aliases = Vec::new();
 
         while input.peek(Token![#]) {
@@ -836,6 +842,9 @@ impl Parse for ObjectField {
             } else if content.peek(kw::read_only) {
                 read_only = Some(content.parse::<kw::read_only>()?);
                 content.parse::<kw::End>()?;
+            } else if content.peek(kw::reflect_opaque) {
+                reflect_opaque = Some(content.parse::<kw::reflect_opaque>()?);
+                content.parse::<kw::End>()?;
             } else {
                 content.parse::<kw::security>()?;
                 content.parse::<Token![=]>()?;
@@ -865,6 +874,7 @@ impl Parse for ObjectField {
             read_only,
             visibility,
             deprecated_aliases,
+            reflect_opaque,
         })
     }
 }
@@ -885,9 +895,26 @@ impl Parse for FieldList {
     }
 }
 
+pub(crate) enum ReflectType {
+    NoReflect,
+    Opaque(kw::reflect_opaque)
+}
+
+impl Parse for ReflectType {
+    fn parse(input: ParseStream) -> Result<Self> {
+        if input.peek(reflect_opaque) {
+            Ok(Self::Opaque(input.parse()?))
+        } else {
+            input.parse::<kw::no_reflect>()?;
+            Ok(Self::NoReflect)
+        }
+    }
+}
+
 pub(crate) struct ClassArgs {
     pub require_components: Option<Punctuated<Type, Token![,]>>,
     pub custom_constructor: Option<NewFn>,
+    pub reflect_type: Option<ReflectType>,
     pub custom_getter: Option<(
         LuaMethodClosure<CustomGetterLuaArgs, kw::LuaValue>,
         CodeBlock,
@@ -911,6 +938,7 @@ impl Parse for ClassArgs {
         let mut custom_constructor = None;
         let mut post_init = None;
         let mut custom_getter = None;
+        let mut reflect_type = None;
         while input.peek(Token![#]) {
             input.parse::<Token![#]>()?;
             let content;
@@ -929,6 +957,8 @@ impl Parse for ClassArgs {
                 content.parse::<kw::custom_getter>()?;
                 content.parse::<Token![=]>()?;
                 custom_getter = Some((content.parse()?, content.parse()?));
+            } else if content.peek(kw::reflect_opaque) || content.peek(kw::no_reflect) {
+                reflect_type = Some(content.parse()?);
             } else {
                 content.parse::<kw::custom_new>()?;
                 content.parse::<Token![=]>()?;
@@ -957,6 +987,7 @@ impl Parse for ClassArgs {
             custom_constructor,
             post_init,
             custom_getter,
+            reflect_type
         })
     }
 }
