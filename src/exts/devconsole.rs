@@ -2,7 +2,11 @@ use std::io::Read;
 
 use crate::{
     core::{
-        LoggedMessage, LuauContainer, RblxLogs, TaskScheduler, ThreadIdentity, WorldAccess, extension::{EngineExtension, EngineExtensionDistribution, EngineExtensionInitLevel}, lua::ThreadIdentityType, object::RootInstance, push_log, push_lua_error
+        LoggedMessage, LuauContainer, RblxLogs, TaskScheduler, ThreadIdentity, WorldAccess,
+        extension::{EngineExtension, EngineExtensionDistribution, EngineExtensionInitLevel},
+        lua::ThreadIdentityType,
+        object::RootInstance,
+        push_log, push_lua_error,
     },
     enums::MessageType,
     internal_prelude::*,
@@ -352,9 +356,7 @@ impl EngineExtension for DevConsoleExtension {
         world.run_system_once(start_input_handler).unwrap();
     }
     fn post_shutdown_hook(&self, world: &mut World) {
-        world
-            .remove_resource::<InterpreterThread>()
-            .expect("No interpreter thread was removed");
+        world.remove_resource::<InterpreterThread>();
         world.schedule_scope(EguiPrimaryContextPass, |w, s| {
             s.remove_systems_in_set(ui_commandline, w, ScheduleCleanupPolicy::RemoveSystemsOnly)
                 .unwrap();

@@ -897,7 +897,7 @@ impl Parse for FieldList {
 
 pub(crate) enum ReflectType {
     NoReflect,
-    Opaque(kw::reflect_opaque)
+    Opaque(kw::reflect_opaque),
 }
 
 impl Parse for ReflectType {
@@ -987,7 +987,7 @@ impl Parse for ClassArgs {
             custom_constructor,
             post_init,
             custom_getter,
-            reflect_type
+            reflect_type,
         })
     }
 }

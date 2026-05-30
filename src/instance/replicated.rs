@@ -1,4 +1,5 @@
 use crate::core::object::ServiceMembers;
+use crate::userdata::ObjectRef;
 use crate::{core::object::service::DisablingService, internal_prelude::*};
 use bevy_rblx_derive::register_class;
 use mlua::prelude::*;
@@ -14,5 +15,9 @@ register_class! {
     #[require_components(DisablingService)]
     priv ReplicatedFirst(Service)
     members {}
-    methods {}
+    methods {
+        fn remove_default_loading_screen(lua: &Lua, this: ObjectRef) -> LuaResult<()> {
+            lua_todo!()
+        }
+    }
 }

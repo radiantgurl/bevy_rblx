@@ -186,57 +186,65 @@ pub mod commands {
 use bevy_rblx_derive::fast_flag;
 use commands::*;
 
+#[cfg(debug_assertions)]
+#[inline(always)]
+fn take_backtrace() {
+    if VERBOSE_FLAG.load(Ordering::Relaxed) >= 3 {
+        use std::backtrace::{Backtrace, BacktraceStatus};
+        let bt = Backtrace::capture();
+        match bt.status() {
+            BacktraceStatus::Captured => {
+                let bt_str = bt.to_string();
+                for i in bt_str
+                    .split('\n')
+                    .skip(1)
+                    .step_by(2)
+                    .skip(1)
+                    .take(9)
+                    .filter(|x| !x.contains("rustup") && !x.contains("mlua-"))
+                {
+                    println!("{i}");
+                }
+            }
+            _ => (),
+        }
+    }
+}
+#[cfg(not(debug_assertions))]
+#[inline(always)]
+fn take_backtrace() {}
+
 impl<'a> RefCountedEntityCommandsExt for EntityCommands<'a> {
     unsafe fn inc_ref(&mut self) -> &mut Self {
-        #[cfg(debug_assertions)]
-        if VERBOSE_FLAG.load(Ordering::Relaxed) >= 3 {
-            use std::backtrace::{Backtrace, BacktraceStatus};
-            let bt = Backtrace::capture();
-            match bt.status() {
-                BacktraceStatus::Captured => {
-                    let bt_str = bt.to_string();
-                    for i in bt_str
-                        .split('\n')
-                        .skip(1)
-                        .step_by(2)
-                        .skip(1)
-                        .take(9)
-                        .filter(|x| !x.contains("rustup") && !x.contains("mlua-"))
-                    {
-                        println!("{i}");
-                    }
-                }
-                _ => (),
-            }
-        }
+        take_backtrace();
         self.queue(inc_ref_command)
     }
     unsafe fn dec_ref(&mut self) -> &mut Self {
-        #[cfg(debug_assertions)]
-        if VERBOSE_FLAG.load(Ordering::Relaxed) >= 3 {
-            use std::backtrace::{Backtrace, BacktraceStatus};
-            let bt = Backtrace::capture();
-            match bt.status() {
-                BacktraceStatus::Captured => {
-                    let bt_str = bt.to_string();
-                    for i in bt_str
-                        .split('\n')
-                        .skip(1)
-                        .step_by(2)
-                        .skip(1)
-                        .take(9)
-                        .filter(|x| !x.contains("rustup") && !x.contains("mlua-"))
-                    {
-                        println!("{i}");
-                    }
-                }
-                _ => (),
-            }
-        }
+        take_backtrace();
         self.queue(dec_ref_command)
     }
     fn protect(&mut self) -> &mut Self {
+        take_backtrace();
         self.queue(protect_command)
+    }
+}
+impl<'a> RefCountedEntityCommandsExt for EntityWorldMut<'a> {
+    unsafe fn inc_ref(&mut self) -> &mut Self {
+        take_backtrace();
+        self.reborrow_scope(inc_ref_command).unwrap();
+        self
+    }
+
+    unsafe fn dec_ref(&mut self) -> &mut Self {
+        take_backtrace();
+        self.reborrow_scope(dec_ref_command).unwrap();
+        self
+    }
+
+    fn protect(&mut self) -> &mut Self {
+        take_backtrace();
+        self.reborrow_scope(protect_command).unwrap();
+        self
     }
 }
 pub fn refcounted_check_dead(
