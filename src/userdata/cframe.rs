@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use bevy_rblx_derive::register;
 use mlua::prelude::*;
 
-#[derive(Clone, Copy, FromLua, PartialEq, Debug, Default)]
+#[derive(Clone, Copy, FromLua, PartialEq, Debug, Default, Reflect)]
 #[repr(transparent)]
 pub struct CFrame(Transform);
 

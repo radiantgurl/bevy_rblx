@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use bevy_rblx_derive::register;
 use mlua::prelude::*;
 
-#[derive(Clone, Copy, FromLua, Debug, PartialEq, Default)]
+#[derive(Clone, Copy, FromLua, Debug, PartialEq, Default, Reflect)]
 #[repr(transparent)]
 pub struct Vector3(Vec3);
 

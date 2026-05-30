@@ -14,8 +14,13 @@ use mlua::prelude::*;
 
 use bevy::ecs::entity::Entity;
 use parking_lot::Mutex;
-
-pub struct ObjectRef(Entity, WeakLua, Arc<Mutex<WorldAccessDestructor>>);
+#[derive(Reflect)]
+#[reflect(opaque)]
+pub struct ObjectRef(
+    Entity,
+    #[reflect(ignore)] WeakLua,
+    #[reflect(ignore)] Arc<Mutex<WorldAccessDestructor>>,
+);
 
 impl std::fmt::Debug for ObjectRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

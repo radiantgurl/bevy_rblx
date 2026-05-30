@@ -16,7 +16,7 @@ use bevy::{
     camera::Camera2d,
     ecs::{
         error::BevyError,
-        message::MessageReader,
+        message::{MessageReader, Messages},
         query::Allow,
         resource::Resource,
         schedule::{IntoScheduleConfigs, Schedule},
@@ -458,10 +458,20 @@ impl Engine {
 
         app
     }
+
+    fn integrated_server_extract(client: &mut World, server: &mut World) {
+        if client.resource::<Messages<AppExit>>().len() != 0 {
+            server.write_message(AppExit::Success);
+        }
+    }
+
     pub fn insert_integrated_server(client: &mut App) {
         let mut server = Self::headless();
 
-        let server_subapp = take(&mut server.sub_apps_mut().main);
+        let mut server_subapp = take(&mut server.sub_apps_mut().main);
+
+        server_subapp.set_extract(Self::integrated_server_extract);
+
         client.insert_sub_app(IntegratedServer, server_subapp);
     }
     #[cfg(test)]
@@ -549,6 +559,7 @@ impl Engine {
             let exts_clone = exts
                 .iter_mut()
                 .map(|(k, v)| (*k, v.dyn_clone(app)))
+                .filter(|(_, e)| e.distribution().server())
                 .collect::<HashMap<_, _>>();
             app.get_sub_app_mut(IntegratedServer)
                 .unwrap()
@@ -628,7 +639,6 @@ impl Engine {
     #[inline(always)]
     pub fn main() {
         let args = clap::command!()
-            .color(clap::ColorChoice::Always)
             .arg(
                 clap::Arg::new("headless")
                     .help_heading("Runtime")

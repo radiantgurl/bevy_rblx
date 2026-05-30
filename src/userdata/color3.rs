@@ -1,10 +1,11 @@
+use bevy::reflect::Reflect;
 use bevy_rblx_derive::register;
 use mlua::prelude::*;
 
 use crate::core::lua::LuaSingleton;
 use crate::internal_prelude::*;
 
-#[derive(Clone, Copy, PartialEq, Default, Debug, FromLua)]
+#[derive(Clone, Copy, PartialEq, Default, Debug, FromLua, Reflect)]
 pub struct Color3 {
     pub r: f32,
     pub g: f32,

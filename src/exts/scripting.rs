@@ -3,7 +3,7 @@ use bevy::ecs::hierarchy::ChildOf;
 use bevy::ecs::query::{Allow, With};
 use bevy::ecs::resource::Resource;
 use bevy::platform::collections::HashMap;
-use bevy_rblx_derive::{fast_flag, register, register_class};
+use bevy_rblx_derive::{cached_lua_function, fast_flag, register, register_class};
 use mlua::prelude::*;
 
 use crate::core::extension::{EngineExtensionDistribution, EngineExtensionInitLevel};
@@ -11,10 +11,10 @@ use crate::core::lua::{FFLuauDefaultJit, LuaSingleton};
 use crate::core::object::{DisabledObject, Instance, ObjectHeader};
 use crate::core::{FAST_FLAGS, object::InstanceMembers};
 use crate::enums::RunContext;
-use crate::internal::EngineExtension;
+use crate::internal::{CachedLuaFunction, EngineExtension};
 use crate::internal_prelude::*;
 
-use crate::core::{ContainerProvenance, WorldAccess};
+use crate::core::{ContainerProvenance, TaskScheduler, WorldAccess};
 use crate::userdata::ObjectRef;
 
 register_class! {
@@ -144,6 +144,20 @@ impl LuaSingleton for ModuleScript {
     }
 }
 
+#[cached_lua_function]
+fn disable_basescript(lua: &Lua, this: ObjectRef) -> LuaResult<()> {
+    let mut wa = WorldAccess::fetch(lua);
+    let world = wa.access_synchronized()?;
+    Ok(())
+}
+#[cached_lua_function]
+fn enable_basescript(lua: &Lua, this: ObjectRef) -> LuaResult<()> {
+    let mut wa = WorldAccess::fetch(lua);
+    let world = wa.access_synchronized()?;
+    BaseScriptMembers::fetch_members_mut(world, this.entity());
+    Ok(())
+}
+
 fn set_enabled(lua: &Lua, this: Entity, new_value: bool) -> LuaResult<bool> {
     let mut wa = WorldAccess::fetch(lua);
     let world = wa.access_synchronized()?;
@@ -158,7 +172,17 @@ fn set_enabled(lua: &Lua, this: Entity, new_value: bool) -> LuaResult<bool> {
         return Ok(true);
     }
     if new_value {
+        TaskScheduler::fetch(lua).defer(
+            lua,
+            ENABLE_BASESCRIPT.fetch(lua),
+            ObjectRef::new(lua, this),
+        )?;
     } else {
+        TaskScheduler::fetch(lua).defer(
+            lua,
+            DISABLE_BASESCRIPT.fetch(lua),
+            ObjectRef::new(lua, this),
+        )?;
     }
     return Ok(true);
 }
