@@ -7,7 +7,7 @@ use syn::{
 };
 use utils::camel_case_to_snake_case;
 
-use crate::{parse::ClassArgs, utils::snake_case_to_camel_case};
+use crate::{parse::{ClassArgs, ReflectType}, utils::snake_case_to_camel_case};
 
 mod parse;
 mod utils;
@@ -123,7 +123,7 @@ pub fn lua_enum(
     quote! {
         use mlua::prelude::*;
 
-        #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+        #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, bevy::reflect::Reflect)]
         #[repr(i16)]
         #enum_block
 
@@ -169,7 +169,7 @@ pub fn lua_enum(
             }
         }
 
-        #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+        #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, bevy::reflect::Reflect)]
         #vis struct #enum_type_name;
 
         impl FromLua for #enum_type_name {
@@ -276,7 +276,7 @@ pub fn create_enums(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
         #(#modules)*
         #(#enum_use)*
 
-        #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+        #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, bevy_rblx::internal::Reflect)]
         pub struct LuaEnums;
 
         impl FromLua for LuaEnums {
@@ -469,8 +469,14 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
     let members = {
         let struct_spanned = {
+            let (reflect_derive, reflect_attr) = match &args.reflect_type {
+                Some(ReflectType::NoReflect) => (quote! {}, quote! {}),
+                Some(ReflectType::Opaque(x)) => (quote_spanned! {x.span() => , bevy_rblx::internal::Reflect}, quote_spanned! {x.span() => #[reflect(opaque)]}),
+                None => (quote! {, bevy_rblx::internal::Reflect}, quote! {})
+            };
             let derive = quote_spanned! { args.members_token.span() =>
-                #[derive(Clone, bevy::prelude::Component)]
+                #[derive(Clone, bevy_rblx::internal::Component #reflect_derive)]
+                #reflect_attr
             };
             let head = quote_spanned! {args.members_token.span() =>
                 pub struct #class_name_members_ident
@@ -495,7 +501,13 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 let vis = &field.visibility;
                 let name = &field.name;
                 let ty = &field.ty;
+                let reflect_opaque = if let Some(v) = &field.reflect_opaque {
+                    quote_spanned! {v.span() => #[reflect(ignore)]}
+                } else {
+                    quote! {}
+                };
                 quote! {
+                    #reflect_opaque
                     #vis #name: #ty
                 }
             });
@@ -626,10 +638,12 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
             quote_spanned! {class_name.span() =>
                 impl #class_name_members_ident {
                     #[allow(dead_code)]
+                    #[must_use]
                     pub fn fetch_members<'a>(world: &'a ::bevy::prelude::World, this: ::bevy::prelude::Entity) -> &'a Self {
                         world.get::<#class_name_members_ident>(this).expect(#new_lit_str)
                     }
                     #[allow(dead_code)]
+                    #[must_use]
                     pub fn fetch_members_mut<'a>(world: &'a mut ::bevy::prelude::World, this: ::bevy::prelude::Entity) -> ::bevy::prelude::Mut<'a, Self> {
                         world.get_mut::<#class_name_members_ident>(this).expect(#new_lit_str)
                     }
