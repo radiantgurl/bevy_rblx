@@ -1,11 +1,12 @@
 use crate::userdata::{CFrame, ObjectRef, Vector3};
 
+use bevy::{math::Vec3, reflect::Reflect};
 use mlua::{
     ffi::{lua_Integer, lua_Number},
     prelude::*,
 };
 
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default, Debug, Reflect)]
 #[non_exhaustive]
 pub enum LuaFreeValue {
     #[default]
@@ -13,12 +14,12 @@ pub enum LuaFreeValue {
     Boolean(bool),
     Integer(lua_Integer),
     Number(lua_Number),
-    Vector(LuaVector),
+    Vector(Vec3),
     String(String),
     Object(ObjectRef),
     CFrame(CFrame),
     Vector3(Vector3),
-    Buffer(Box<[u8]>),
+    Buffer(Vec<u8>),
 }
 
 impl FromLua for LuaFreeValue {
@@ -29,7 +30,11 @@ impl FromLua for LuaFreeValue {
             LuaValue::LightUserData(_) => todo!(),
             LuaValue::Integer(i) => Ok(LuaFreeValue::Integer(i)),
             LuaValue::Number(n) => Ok(LuaFreeValue::Number(n)),
-            LuaValue::Vector(vector) => Ok(LuaFreeValue::Vector(vector)),
+            LuaValue::Vector(vector) => Ok(LuaFreeValue::Vector(Vec3 {
+                x: vector.x(),
+                y: vector.y(),
+                z: vector.z(),
+            })),
             LuaValue::String(s) => Ok(LuaFreeValue::String(s.to_string_lossy())),
             LuaValue::Table(table) => todo!(),
             LuaValue::Function(_) => Err(LuaError::runtime(
@@ -57,12 +62,7 @@ impl FromLua for LuaFreeValue {
                     }
                 }
             }
-            LuaValue::Buffer(buffer) => Ok(LuaFreeValue::Buffer(unsafe {
-                let buf_vec = buffer.to_vec();
-                let mut b = Box::new_uninit_slice(buf_vec.len()).assume_init();
-                b.copy_from_slice(buf_vec.as_slice());
-                b
-            })),
+            LuaValue::Buffer(buffer) => Ok(LuaFreeValue::Buffer(buffer.to_vec())),
             LuaValue::Error(e) => Err(e.into_lua_err()),
             LuaValue::Other(_) => unimplemented!(),
         }
@@ -76,7 +76,7 @@ impl IntoLua for LuaFreeValue {
             LuaFreeValue::Boolean(b) => Ok(LuaValue::Boolean(b)),
             LuaFreeValue::Integer(i) => Ok(LuaValue::Integer(i)),
             LuaFreeValue::Number(n) => Ok(LuaValue::Number(n)),
-            LuaFreeValue::Vector(vector) => Ok(LuaValue::Vector(vector)),
+            LuaFreeValue::Vector(v) => Ok(LuaValue::Vector(LuaVector::new(v.x, v.y, v.z))),
             LuaFreeValue::String(s) => s.into_lua(lua),
             LuaFreeValue::Object(o) => o.change_lua(lua).into_lua(lua),
             LuaFreeValue::Buffer(items) => Ok(LuaValue::Buffer(lua.create_buffer(items)?)),
@@ -93,7 +93,7 @@ impl IntoLua for &LuaFreeValue {
             LuaFreeValue::Boolean(b) => Ok(LuaValue::Boolean(*b)),
             LuaFreeValue::Integer(i) => Ok(LuaValue::Integer(*i)),
             LuaFreeValue::Number(n) => Ok(LuaValue::Number(*n)),
-            LuaFreeValue::Vector(vector) => Ok(LuaValue::Vector(*vector)),
+            LuaFreeValue::Vector(v) => Ok(LuaValue::Vector(LuaVector::new(v.x, v.y, v.z))),
             LuaFreeValue::String(s) => s.as_str().into_lua(lua),
             LuaFreeValue::Object(o) => o.clone_lua(lua).into_lua(lua),
             LuaFreeValue::Buffer(items) => Ok(LuaValue::Buffer(lua.create_buffer(items)?)),
@@ -117,3 +117,12 @@ impl !LuaSend for LuaThread {}
 impl !LuaSend for LuaAnyUserData {}
 impl LuaSend for WeakLua {}
 impl LuaSend for Lua {}
+
+#[cfg(test)]
+mod tests {
+    use static_assertions::assert_impl_all;
+
+    use crate::userdata::{LuaFreeValue, LuaSend};
+
+    assert_impl_all!(LuaFreeValue: LuaSend);
+}

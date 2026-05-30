@@ -43,7 +43,8 @@ impl std::fmt::Debug for ContainerEntry {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Reflect)]
+#[reflect(opaque)]
 pub struct RBXScriptSignal {
     container_tables: Arc<RwLock<HashMap<usize, ContainerEntry>>>,
 }
@@ -56,7 +57,8 @@ impl Clone for RBXScriptSignal {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Reflect)]
+#[reflect(opaque)]
 pub enum InnerRBXScriptConnection {
     Native {
         signal: LuaValue,
@@ -69,7 +71,7 @@ pub enum InnerRBXScriptConnection {
     },
 }
 
-#[derive(Clone, FromLua)]
+#[derive(Clone, FromLua, Reflect)]
 pub struct RBXScriptConnection(InnerRBXScriptConnection);
 
 impl RBXScriptSignalSingle {
@@ -392,6 +394,8 @@ impl RBXScriptSignal {
 // 0 = IMMEDIATE
 // 1 = DEFERRED
 // 2 = ANCESTRYDEFERRED
+#[derive(Reflect)]
+#[reflect(opaque)]
 pub struct LuaSendRBXScriptConnection {
     conn: Option<LuaRegistryKey>,
     weak_lua: WeakLua,

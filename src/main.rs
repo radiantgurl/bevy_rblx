@@ -28,6 +28,7 @@ pub mod internal {
 
     pub use mlua::Error as LuaError;
     pub use mlua::FromLua;
+    pub use mlua::Lua;
     pub use mlua::MultiValue as LuaMultiValue;
     pub use mlua::Result as LuaResult;
 

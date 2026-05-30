@@ -958,3 +958,25 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
         };
     }.into()
 }
+
+#[proc_macro_attribute]
+pub fn cached_lua_function(
+    arguments: proc_macro::TokenStream,
+    ts: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
+    if !arguments.is_empty() {
+        let args_2: TokenStream = arguments.into();
+        return syn::Error::new(args_2.span(), "expected ]")
+            .into_compile_error()
+            .into();
+    }
+    let item_fn = parse_macro_input!(ts as syn::ItemFn);
+    // parsed.to_token_stream().into()
+    let vis = &item_fn.vis;
+    let name = &item_fn.sig.ident;
+    let static_name = Ident::new(&name.to_string().to_uppercase(), name.span());
+    quote! {
+        #item_fn
+        #vis static #static_name: bevy_rblx::internal::CachedLuaFunction = bevy_rblx::internal::CachedLuaFunction::new(move |l: &bevy_rblx::internal::Lua| l.create_function(#name).unwrap());
+    }.into()
+}
