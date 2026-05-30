@@ -359,10 +359,6 @@ register_class! {
             let children = {
                 let world_access = WorldAccess::fetch_readonly(lua);
                 let world = world_access.access_read_only();
-                let members = world.get::<InstanceMembers>(this.entity()).expect("is instance");
-                if members.destroy_protected {
-                    return Ok(());
-                }
                 world.get::<Children>(this.entity()).map(|x| x.to_vec()).unwrap_or_default()
             };
 
