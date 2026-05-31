@@ -9,7 +9,7 @@ use crate::{
     },
     internal_prelude::*,
 };
-use bevy::prelude::*;
+use bevy::{platform::collections::HashMap, prelude::*};
 use mlua::prelude::*;
 
 use bevy::ecs::entity::Entity;
@@ -101,6 +101,9 @@ impl ObjectRef {
         self.1 = lua.weak();
         self
     }
+    pub fn change_lua_ref(&mut self, lua: &Lua) {
+        self.1 = lua.weak();
+    }
 }
 
 impl Deref for ObjectRef {
@@ -189,5 +192,26 @@ impl Clone for ObjectRef {
             commands.entity(self.entity()).inc_ref();
         }
         Self(self.0.clone(), self.1.clone(), self.2.clone())
+    }
+}
+
+pub trait ObjectRefCollectionExt {
+    fn update_lua_origin(&mut self, lua: &Lua);
+}
+
+impl ObjectRefCollectionExt for [ObjectRef] {
+    fn update_lua_origin(&mut self, lua: &Lua) {
+        self.iter_mut().for_each(|v| v.change_lua_ref(lua))
+    }
+}
+impl ObjectRefCollectionExt for Vec<ObjectRef> {
+    fn update_lua_origin(&mut self, lua: &Lua) {
+        self.iter_mut().for_each(|v| v.change_lua_ref(lua))
+    }
+}
+
+impl<K: Sized> ObjectRefCollectionExt for HashMap<K, ObjectRef> {
+    fn update_lua_origin(&mut self, lua: &Lua) {
+        self.values_mut().for_each(|v| v.change_lua_ref(lua))
     }
 }
