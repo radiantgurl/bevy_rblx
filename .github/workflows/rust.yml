@@ -1,7 +1,6 @@
 name: Rust
 
 on:
-  - push
   - pull_request
 
 env:
@@ -26,6 +25,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Install prerequisites
+      run: sudo apt-get -qy update && sudo apt-get install -fy libwayland-dev
     - name: Build
       run: cargo build --verbose
     - name: Run tests
