@@ -169,6 +169,7 @@ mod sealed {
             }
         }
     }
+    #[allow(unused)]
     macro_rules! lua_unimplemented {
         () => {
             {
@@ -190,4 +191,5 @@ pub(crate) use sealed::AnyUserDataTypedExt as _;
 pub use sealed::IntoLuaThread;
 pub(crate) use sealed::LuaExt as _;
 pub(crate) use sealed::LuaFunctionExt as _;
+#[allow(unused)]
 pub(crate) use sealed::{lua_todo, lua_unimplemented};

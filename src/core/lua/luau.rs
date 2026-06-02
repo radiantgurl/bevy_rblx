@@ -44,7 +44,7 @@ impl LuauContainer {
     fn internal_init(mut self) -> Self {
         init_singletons(&mut self.lua).unwrap();
 
-        self.lua.enable_jit(FAST_FLAGS.fetch::<FFLuauForceJit>());
+        self.lua.enable_jit(FAST_FLAGS.fetch::<FFLuauDefaultJit>());
 
         let compiler = Compiler::new()
             .set_debug_level(FAST_FLAGS.fetch::<FFLuauDebugLevel>() as u8)
@@ -172,13 +172,16 @@ impl ThreadIdentity {
     }
 }
 
-fast_flag!(FFLuauForceJit: bool = false);
+fast_flag!(FFLuauDefaultJit: bool = false);
 fast_flag!(FFLuauDebugLevel: u64 = 1);
 fast_flag!(FFLuauOptimization: u64 = 1);
 fast_flag!(FFLuauGlobalTypeInfoLevel: bool = false);
 
-#[derive(Clone, Copy, Component, Debug)]
-pub struct ContainerProvenance(pub Entity);
+#[derive(Clone, Copy, Component, Debug, Reflect)]
+pub struct ContainerProvenance {
+    pub entity: Entity,
+    pub internally_managed: bool,
+}
 
 pub fn create_provenance(
     containers: Query<(Entity, Has<ContainerProvenance>), Added<LuauContainer>>,
@@ -188,28 +191,65 @@ pub fn create_provenance(
         .iter()
         .filter_map(|(e, h)| if h { Some(e) } else { None })
     {
-        commands.entity(e).insert(ContainerProvenance(e));
+        commands.entity(e).insert(ContainerProvenance {
+            entity: e,
+            internally_managed: false,
+        });
     }
 }
 
 pub fn assign_provenance(
-    missing_provenance: Query<
+    missing_provenance: Query<Entity, (With<ObjectHeader>, Without<ContainerProvenance>)>,
+    changed_provenance: Query<
         Entity,
         (
+            With<ContainerProvenance>,
             With<ObjectHeader>,
-            Without<ContainerProvenance>,
-            With<Children>,
+            Changed<ChildOf>,
         ),
     >,
-    has_provenance: Query<Entity, With<LuauContainer>>,
+    has_provenance: Query<&ContainerProvenance, With<ContainerProvenance>>,
     ancestors: Query<&ChildOf>,
+    descendants: Query<&Children>,
 
     mut commands: Commands,
 ) {
     for e in missing_provenance.iter() {
         for ancestor in ancestors.iter_ancestors(e) {
-            if has_provenance.contains(ancestor) {
-                commands.entity(e).insert(ContainerProvenance(e));
+            if let Ok(prov) = has_provenance.get(ancestor)
+                && !prov.internally_managed
+            {
+                commands.entity(e).insert(ContainerProvenance {
+                    entity: prov.entity,
+                    internally_managed: false,
+                });
+                break;
+            }
+        }
+    }
+    for e in changed_provenance.iter() {
+        for ancestor in ancestors.iter_ancestors(e) {
+            if let Ok(anc_prov) = has_provenance.get(ancestor)
+                && !anc_prov.internally_managed
+            {
+                if let prov = has_provenance.get(e).unwrap()
+                    && !prov.internally_managed
+                {
+                    commands.entity(e).insert(ContainerProvenance {
+                        entity: anc_prov.entity,
+                        internally_managed: false,
+                    });
+                }
+                for e in descendants.iter_descendants(e) {
+                    if let Ok(prov) = has_provenance.get(e)
+                        && !prov.internally_managed
+                    {
+                        commands.entity(e).insert(ContainerProvenance {
+                            entity: anc_prov.entity,
+                            internally_managed: false,
+                        });
+                    }
+                }
                 break;
             }
         }

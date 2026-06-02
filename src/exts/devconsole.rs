@@ -2,8 +2,8 @@ use std::io::Read;
 
 use crate::{
     core::{
-        Headless, LoggedMessage, LuauContainer, RblxLogs, TaskScheduler, ThreadIdentity,
-        extension::{EngineExtension, EngineExtensionInitLevel},
+        LoggedMessage, LuauContainer, RblxLogs, TaskScheduler, ThreadIdentity, WorldAccess,
+        extension::{EngineExtension, EngineExtensionDistribution, EngineExtensionInitLevel},
         lua::ThreadIdentityType,
         object::RootInstance,
         push_log, push_lua_error,
@@ -31,7 +31,6 @@ async fn interpreter_execute(
     lua: Lua,
     (e, table, chunk_name): (String, LuaTable, String),
 ) -> LuaResult<()> {
-    println!("{e}");
     let res = lua
         .load(e)
         .set_environment(table.clone())
@@ -95,7 +94,12 @@ pub async fn interpreter(lua: Lua, (): ()) -> LuaResult<()> {
         })?,
     )?;
     loop {
-        let e = lua.yield_with::<String>(()).await?;
+        let e = lua.yield_with::<LuaValue>(()).await?;
+        if !e.is_string() {
+            continue;
+        }
+        let e = e.to_string()?;
+        println!("> {e}");
 
         TaskScheduler::fetch(&lua).defer_custom_pd(
             &lua,
@@ -106,17 +110,23 @@ pub async fn interpreter(lua: Lua, (): ()) -> LuaResult<()> {
     }
 }
 
+pub fn create_interpreter_thread(w: &mut World) -> Lua {
+    let c = w
+        .query_filtered::<&LuauContainer, With<RootInstance>>()
+        .single(w)
+        .unwrap();
+    let lua = c.lua.clone();
+    let f = lua.create_async_function(interpreter).unwrap();
+    let thr = TaskScheduler::fetch(&lua)
+        .defer_custom_pd(&lua, f, (), false)
+        .unwrap();
+    w.insert_resource(InterpreterThread(thr));
+    lua
+}
+
 pub fn start_input_handler(mut commands: Commands) {
     commands.queue(|w: &mut World| {
-        let c = w
-            .query_filtered::<&LuauContainer, With<RootInstance>>()
-            .single(w)
-            .unwrap();
-        let f = c.lua.create_async_function(interpreter).unwrap();
-        let thr = TaskScheduler::fetch(&c.lua)
-            .defer_next_frame(&c.lua, f, ())
-            .unwrap();
-        w.insert_resource(InterpreterThread(thr));
+        create_interpreter_thread(w);
         w.schedule_scope(EguiPrimaryContextPass, |_, s| {
             s.add_systems(ui_commandline);
         });
@@ -130,6 +140,7 @@ fn ui_commandline(
 
     mut code_input: Local<String>,
     thread: Res<InterpreterThread>,
+    mut commands: Commands,
 
     old_logs: Res<RblxLogs>,
     mut new_logs: MessageReader<LoggedMessage>,
@@ -271,7 +282,22 @@ fn ui_commandline(
             if single_line.lost_focus()
                 && single_line.ctx.input(|i| i.key_pressed(egui::Key::Enter))
             {
-                thread.0.resume::<()>(code_input[2..].to_string()).unwrap();
+                let code = code_input[2..].to_string();
+                if thread.0.resume::<()>(code.clone()).is_err() {
+                    bevy::log::warn!(target:"bevy_rblx::devconsole", "Interpreter thread seems to have died. Creating new environment.");
+                    commands.queue(move |w: &mut World| {
+                        let lua = create_interpreter_thread(w);
+                        TaskScheduler::fetch(&lua).defer_custom_pd(&lua, lua.create_async_function(async move |lua: Lua, c: String| {
+                            let thr = {
+                                let mut wa = WorldAccess::fetch(&lua);
+                                let world = wa.access_synchronized()?;
+                                world.resource::<InterpreterThread>().0.clone()
+                            };
+                            TaskScheduler::fetch(&lua).defer_next_frame(&lua, thr, c)?;
+                            Ok(())
+                        }).unwrap(), code, false).unwrap();
+                    })
+                }
                 let is_empty = if current_logs.as_ref().unwrap().is_empty() {
                     ""
                 } else {
@@ -297,10 +323,7 @@ fn ui_commandline(
 }
 
 #[derive(Default)]
-pub struct DevConsoleExtension {
-    server_side: bool,
-}
-
+pub struct DevConsoleExtension;
 #[register]
 impl EngineExtension for DevConsoleExtension {
     fn id(&self) -> &'static str {
@@ -310,16 +333,19 @@ impl EngineExtension for DevConsoleExtension {
     fn init_level(&self) -> EngineExtensionInitLevel {
         EngineExtensionInitLevel::Runtime
     }
+    fn distribution(&self) -> EngineExtensionDistribution {
+        EngineExtensionDistribution::Client
+    }
 
     fn dyn_clone(&mut self, _app: &mut App) -> Box<dyn EngineExtension> {
-        Box::new(Self { server_side: true })
+        Box::new(Self)
     }
 
     fn name(&self) -> &'static str {
         "Developer Console"
     }
     fn description(&self) -> Option<&'static str> {
-        Some("Adds a Luau interpreter")
+        Some("Adds a developer console on the F9 key")
     }
 
     fn dynamically_removable(&self) -> bool {
@@ -327,23 +353,13 @@ impl EngineExtension for DevConsoleExtension {
     }
 
     fn runtime_init(&self, world: &mut World) {
-        if world.get_resource::<Headless>().is_none() {
-            world.run_system_once(start_input_handler).unwrap();
-        }
+        world.run_system_once(start_input_handler).unwrap();
     }
     fn post_shutdown_hook(&self, world: &mut World) {
-        if world.get_resource::<Headless>().is_none() {
-            world
-                .remove_resource::<InterpreterThread>()
-                .expect("No interpreter thread was removed");
-            world.schedule_scope(EguiPrimaryContextPass, |w, s| {
-                s.remove_systems_in_set(
-                    ui_commandline,
-                    w,
-                    ScheduleCleanupPolicy::RemoveSystemsOnly,
-                )
+        world.remove_resource::<InterpreterThread>();
+        world.schedule_scope(EguiPrimaryContextPass, |w, s| {
+            s.remove_systems_in_set(ui_commandline, w, ScheduleCleanupPolicy::RemoveSystemsOnly)
                 .unwrap();
-            });
-        }
+        });
     }
 }

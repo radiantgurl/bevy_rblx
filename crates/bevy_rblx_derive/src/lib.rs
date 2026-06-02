@@ -2,12 +2,15 @@ use parse::AttrArguments;
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote, quote_spanned};
 use syn::{
-    Error, Expr, ExprArray, Ident, ItemEnum, ItemImpl, LitStr, Path, Token, Type, parse::Parse,
+    Error, Expr, ExprArray, Ident, ItemEnum, ItemImpl, LitStr, Token, Type, parse::Parse,
     parse_macro_input, spanned::Spanned,
 };
 use utils::camel_case_to_snake_case;
 
-use crate::{parse::ClassArgs, utils::snake_case_to_camel_case};
+use crate::{
+    parse::{ClassArgs, ReflectType},
+    utils::snake_case_to_camel_case,
+};
 
 mod parse;
 mod utils;
@@ -123,7 +126,7 @@ pub fn lua_enum(
     quote! {
         use mlua::prelude::*;
 
-        #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+        #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, bevy::reflect::Reflect)]
         #[repr(i16)]
         #enum_block
 
@@ -164,12 +167,13 @@ pub fn lua_enum(
                 fields.add_field_method_get("Name", |_, this| Ok(match (this) {
                     #(#variant_quotes_names_only),*
                 }));
+                fields.add_field("Origin", stringify!(#name));
                 fields.add_field_method_get("Value", |_, this| Ok(*this as i16));
 
             }
         }
 
-        #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+        #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, bevy::reflect::Reflect)]
         #vis struct #enum_type_name;
 
         impl FromLua for #enum_type_name {
@@ -205,6 +209,7 @@ pub fn lua_enum(
             }
             fn add_fields<F: LuaUserDataFields<Self>>(fields: &mut F) {
                 fields.add_meta_field("__type", "Enum");
+                fields.add_field("ENUM_NAME",stringify!(#name));
                 #(#variant_fields)*
             }
         }
@@ -276,7 +281,7 @@ pub fn create_enums(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
         #(#modules)*
         #(#enum_use)*
 
-        #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+        #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, bevy_rblx::internal::Reflect)]
         pub struct LuaEnums;
 
         impl FromLua for LuaEnums {
@@ -469,8 +474,17 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
     let members = {
         let struct_spanned = {
+            let (reflect_derive, reflect_attr) = match &args.reflect_type {
+                Some(ReflectType::NoReflect) => (quote! {}, quote! {}),
+                Some(ReflectType::Opaque(x)) => (
+                    quote_spanned! {x.span() => , bevy_rblx::internal::Reflect},
+                    quote_spanned! {x.span() => #[reflect(opaque)]},
+                ),
+                None => (quote! {, bevy_rblx::internal::Reflect}, quote! {}),
+            };
             let derive = quote_spanned! { args.members_token.span() =>
-                #[derive(Clone, bevy::prelude::Component)]
+                #[derive(Clone, bevy_rblx::internal::Component #reflect_derive)]
+                #reflect_attr
             };
             let head = quote_spanned! {args.members_token.span() =>
                 pub struct #class_name_members_ident
@@ -495,7 +509,13 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 let vis = &field.visibility;
                 let name = &field.name;
                 let ty = &field.ty;
+                let reflect_opaque = if let Some(v) = &field.reflect_opaque {
+                    quote_spanned! {v.span() => #[reflect(ignore)]}
+                } else {
+                    quote! {}
+                };
                 quote! {
+                    #reflect_opaque
                     #vis #name: #ty
                 }
             });
@@ -626,10 +646,12 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
             quote_spanned! {class_name.span() =>
                 impl #class_name_members_ident {
                     #[allow(dead_code)]
+                    #[must_use]
                     pub fn fetch_members<'a>(world: &'a ::bevy::prelude::World, this: ::bevy::prelude::Entity) -> &'a Self {
                         world.get::<#class_name_members_ident>(this).expect(#new_lit_str)
                     }
                     #[allow(dead_code)]
+                    #[must_use]
                     pub fn fetch_members_mut<'a>(world: &'a mut ::bevy::prelude::World, this: ::bevy::prelude::Entity) -> ::bevy::prelude::Mut<'a, Self> {
                         world.get_mut::<#class_name_members_ident>(this).expect(#new_lit_str)
                     }
@@ -956,5 +978,27 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
             bevy_rblx::internal::inventory::submit!(bevy_rblx::internal::ObjectVTableCreationPointer(move || &#vtable_name));
         };
+    }.into()
+}
+
+#[proc_macro_attribute]
+pub fn cached_lua_function(
+    arguments: proc_macro::TokenStream,
+    ts: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
+    if !arguments.is_empty() {
+        let args_2: TokenStream = arguments.into();
+        return syn::Error::new(args_2.span(), "expected ]")
+            .into_compile_error()
+            .into();
+    }
+    let item_fn = parse_macro_input!(ts as syn::ItemFn);
+    // parsed.to_token_stream().into()
+    let vis = &item_fn.vis;
+    let name = &item_fn.sig.ident;
+    let static_name = Ident::new(&name.to_string().to_uppercase(), name.span());
+    quote! {
+        #item_fn
+        #vis static #static_name: bevy_rblx::internal::CachedLuaFunction = bevy_rblx::internal::CachedLuaFunction::new(move |l: &bevy_rblx::internal::Lua| l.create_function(#name).unwrap());
     }.into()
 }

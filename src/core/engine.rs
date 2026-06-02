@@ -1,8 +1,7 @@
 use std::{
-    io::Write,
     mem::{swap, take},
     process::exit,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{Arc, atomic::AtomicU8},
     time::{Duration, Instant},
 };
 
@@ -11,16 +10,16 @@ use bevy::ecs::message::MessageWriter;
 use bevy::{
     DefaultPlugins, MinimalPlugins,
     app::{
-        App, AppExit, AppLabel, FixedUpdate, Last, PluginGroup as _, PostStartup, PostUpdate,
-        PreUpdate, Startup, Update,
+        App, AppExit, AppLabel, FixedUpdate, Last, PluginGroup as _, PostUpdate, PreUpdate,
+        Startup, Update,
     },
     camera::Camera2d,
     ecs::{
         error::BevyError,
-        message::MessageReader,
+        message::{MessageReader, Messages},
         query::Allow,
         resource::Resource,
-        schedule::{IntoScheduleConfigs, Schedule},
+        schedule::{IntoScheduleConfigs, Schedule, SystemSet},
         system::{Commands, Local},
         world::{CommandQueue, World},
     },
@@ -41,8 +40,9 @@ use crate::{
         WorldAccess,
         bevy::ref_counted::RefCountedPlugin,
         extension::{
-            EngineExtension, EngineExtensionInitLevel, EngineExtensions, ext_post_core_init,
-            ext_post_shutdown, ext_pre_shutdown, ext_runtime_init,
+            EngineExtension, EngineExtensionDistribution, EngineExtensionInitLevel,
+            EngineExtensions, ext_post_core_init, ext_post_shutdown, ext_pre_shutdown,
+            ext_runtime_init,
         },
         fastflags::FastFlagValue,
         lua::{
@@ -52,8 +52,8 @@ use crate::{
         },
         object::{
             DisabledObject, NewInstanceEvent, RunServiceMembers,
-            data_model::register_game_and_workspace_global,
-            service_provider::ServiceProviderMembers,
+            data_model::register_game_and_workspace_global, run_service::RunService,
+            service::auto_disable_objects, service_provider::ServiceProviderMembers,
         },
     },
     enums::{CloseReason, SignalBehavior},
@@ -77,7 +77,7 @@ fn put_world_local(l: &mut Option<World>, mut fake_world: World, real_world: &mu
     *l = Some(fake_world);
 }
 
-pub fn initialize(w: &mut World) {
+pub(super) fn initialize(w: &mut World) {
     let container = LuauContainer::default();
     clock(); // initialize clock
     let root_instance;
@@ -103,7 +103,7 @@ pub fn initialize(w: &mut World) {
     w.entity_mut(root_instance).insert(container);
 }
 
-pub fn run_synchronized(world: &mut World) {
+pub(super) fn run_synchronized(world: &mut World) {
     let mut containers = world.query::<&LuauContainer>();
 
     let lua_cloned_iter = containers
@@ -119,7 +119,7 @@ pub fn run_synchronized(world: &mut World) {
         WorldAccess::fetch(&lua).clear_sync_access(world);
     }
 }
-pub fn run_desynchronized(world: &mut World, mut l: Local<Option<World>>) {
+pub(super) fn run_desynchronized(world: &mut World, mut l: Local<Option<World>>) {
     if l.is_none() {
         *l = Some(World::new());
     }
@@ -168,7 +168,7 @@ pub fn run_desynchronized(world: &mut World, mut l: Local<Option<World>>) {
     }
 }
 
-pub fn dispatch_synchronized(world: &mut World) {
+pub(super) fn dispatch_synchronized(world: &mut World) {
     let mut containers = world.query::<&LuauContainer>();
 
     let lua_cloned_iter = containers
@@ -183,7 +183,7 @@ pub fn dispatch_synchronized(world: &mut World) {
         WorldAccess::fetch(&lua).clear_sync_access(world);
     }
 }
-pub fn dispatch_desynchronized(world: &mut World, mut l: Local<Option<World>>) {
+pub(super) fn dispatch_desynchronized(world: &mut World, mut l: Local<Option<World>>) {
     if l.is_none() {
         *l = Some(World::new());
     }
@@ -258,6 +258,7 @@ fn cleanup_instances(w: &mut World) {
             commands: arc_queue.clone(),
         };
         lua.gc_restart();
+        lua.set_globals(lua.create_table().unwrap()).unwrap();
         drop(lua);
     }
 
@@ -319,7 +320,36 @@ create_runservice_trigger!(stepped);
 #[derive(AppLabel, Clone, Copy, Hash, Debug, Default, PartialEq, Eq)]
 pub struct IntegratedServer;
 
-static DEBUG_FLAG: AtomicBool = AtomicBool::new(false);
+#[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, PartialOrd, Ord, SystemSet)]
+#[repr(u8)]
+pub enum SchedulerPhase {
+    ReplicationRecv,
+    PreAnimation,
+    HumanoidStep,
+    PreSimulation,
+    StepSimulation,
+    PostSimulation,
+    PreHeartbeat,
+    Heartbeat,
+    ReplicationSend,
+    Input,
+    PreRender,
+}
+
+pub static VERBOSE_FLAG: AtomicU8 = AtomicU8::new(0);
+
+enum EnabledExts {
+    Disable(Vec<String>),
+    Enable(Vec<String>),
+}
+impl EnabledExts {
+    fn should_be_enabled(&self, id: &'static str, default_enable: bool) -> bool {
+        match self {
+            EnabledExts::Disable(items) => !items.contains(&id.to_owned()) && default_enable,
+            EnabledExts::Enable(items) => items.contains(&id.to_owned()),
+        }
+    }
+}
 
 impl Engine {
     fn additional(app: &mut App) {
@@ -352,67 +382,98 @@ impl Engine {
         app.add_systems(
             PreUpdate,
             (
-                runservice_event_pre_animation,
-                dispatch_synchronized,
-                dispatch_desynchronized,
-                runservice_event_pre_simulation,
-                runservice_event_stepped,
-                dispatch_synchronized,
-                dispatch_desynchronized,
-            )
-                .chain(),
+                (
+                    auto_disable_objects,
+                    runservice_event_pre_animation,
+                    dispatch_synchronized,
+                    dispatch_desynchronized,
+                )
+                    .chain()
+                    .in_set(SchedulerPhase::PreAnimation)
+                    .after(SchedulerPhase::ReplicationRecv),
+                (
+                    runservice_event_pre_simulation,
+                    runservice_event_stepped,
+                    dispatch_synchronized,
+                    dispatch_desynchronized,
+                )
+                    .chain()
+                    .in_set(SchedulerPhase::PreSimulation)
+                    .after(SchedulerPhase::PreAnimation),
+            ),
         );
-        // app.add_systems(
-        //     FixedUpdate,
-        //     (
-        //         // step here
-        //     )
-        //         .chain(),
-        // );
+        app.add_systems(
+            FixedUpdate,
+            (RunService::simulation_hook)
+                .in_set(SchedulerPhase::StepSimulation)
+                .after(SchedulerPhase::PreSimulation),
+        );
         app.add_systems(
             Update,
             (
                 register_game_and_workspace_global,
                 (
-                    runservice_event_post_simulation,
-                    dispatch_synchronized,
-                    dispatch_desynchronized,
-                    create_provenance,
-                    assign_provenance,
-                    run_synchronized.after(register_game_and_workspace_global),
-                    run_desynchronized,
-                    create_provenance,
-                    assign_provenance,
-                    runservice_event_heartbeat,
-                    dispatch_synchronized,
-                    dispatch_desynchronized,
-                )
-                    .chain(),
+                    (
+                        runservice_event_post_simulation,
+                        dispatch_synchronized,
+                        dispatch_desynchronized,
+                    )
+                        .chain()
+                        .in_set(SchedulerPhase::PostSimulation)
+                        .after(SchedulerPhase::StepSimulation),
+                    (
+                        create_provenance,
+                        assign_provenance,
+                        run_synchronized.after(register_game_and_workspace_global),
+                        run_desynchronized,
+                    )
+                        .chain()
+                        .in_set(SchedulerPhase::PreHeartbeat)
+                        .after(SchedulerPhase::PostSimulation),
+                    (
+                        create_provenance,
+                        assign_provenance,
+                        runservice_event_heartbeat,
+                        dispatch_synchronized,
+                        dispatch_desynchronized,
+                    )
+                        .chain()
+                        .in_set(SchedulerPhase::Heartbeat)
+                        .after(SchedulerPhase::PreHeartbeat),
+                ),
             ),
         );
-        app.add_systems(
-            PostUpdate,
-            (
-                create_provenance,
-                assign_provenance,
-                runservice_event_pre_render,
-                dispatch_synchronized,
-                dispatch_desynchronized,
-            )
-                .chain(),
-        );
+        if app.world().contains_resource::<Headless>() {
+            app.add_systems(PostUpdate, (create_provenance, assign_provenance).chain());
+        } else {
+            app.add_systems(
+                PostUpdate,
+                (
+                    create_provenance,
+                    assign_provenance,
+                    runservice_event_pre_render,
+                    dispatch_synchronized,
+                    dispatch_desynchronized,
+                    RunService::render_hook,
+                )
+                    .chain()
+                    .in_set(SchedulerPhase::PreRender)
+                    .after(SchedulerPhase::Heartbeat)
+                    .after(SchedulerPhase::ReplicationSend)
+                    .after(SchedulerPhase::Input),
+            );
+        }
         app.add_systems(Last, (bind_close_system_runner, erase_provenance));
     }
-
     pub fn headless() -> App {
         let mut app = App::new();
         app.world_mut().insert_resource(Headless);
 
         app.add_plugins(MinimalPlugins.build().add(LogPlugin {
-            level: if DEBUG_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
-                Level::DEBUG
-            } else {
-                Level::INFO
+            level: match VERBOSE_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
+                0 => Level::INFO,
+                1 => Level::DEBUG,
+                _ => Level::TRACE,
             },
             ..Default::default()
         }));
@@ -421,15 +482,14 @@ impl Engine {
 
         app
     }
-
     pub fn default() -> App {
         let mut app = App::new();
 
         app.add_plugins(DefaultPlugins.set(LogPlugin {
-            level: if DEBUG_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
-                Level::DEBUG
-            } else {
-                Level::INFO
+            level: match VERBOSE_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
+                0 => Level::INFO,
+                1 => Level::DEBUG,
+                _ => Level::TRACE,
             },
             ..Default::default()
         }));
@@ -447,13 +507,21 @@ impl Engine {
         app
     }
 
+    fn integrated_server_extract(client: &mut World, server: &mut World) {
+        if client.resource::<Messages<AppExit>>().len() != 0 {
+            server.write_message(AppExit::Success);
+        }
+    }
+
     pub fn insert_integrated_server(client: &mut App) {
         let mut server = Self::headless();
 
-        let server_subapp = take(&mut server.sub_apps_mut().main);
+        let mut server_subapp = take(&mut server.sub_apps_mut().main);
+
+        server_subapp.set_extract(Self::integrated_server_extract);
+
         client.insert_sub_app(IntegratedServer, server_subapp);
     }
-
     #[cfg(test)]
     fn generate_exit_after_frame_count(
         mut frame_count: Local<u32>,
@@ -465,7 +533,6 @@ impl Engine {
         }
         *frame_count += 1;
     }
-
     #[cfg(test)]
     pub fn test_mode(exit_after_frames: u32) -> App {
         use crate::core::{FAST_FLAGS, lua::FFTaskSchedulerDisableWatchdog};
@@ -478,20 +545,9 @@ impl Engine {
         app.world_mut().insert_resource(Headless);
         FAST_FLAGS.store::<FFTaskSchedulerDisableWatchdog>(true);
 
-        app.add_plugins(
-            MinimalPlugins
-                .set(ScheduleRunnerPlugin {
-                    run_mode: RunMode::Loop { wait: None },
-                })
-                .build(), // .add(LogPlugin {
-                          //     level: if cfg!(debug_assertions) {
-                          //         Level::DEBUG
-                          //     } else {
-                          //         Level::INFO
-                          //     },
-                          //     ..Default::default()
-                          // }),
-        );
+        app.add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin {
+            run_mode: RunMode::Loop { wait: None },
+        }));
         let built_system = (
             LocalBuilder(0),
             LocalBuilder(exit_after_frames),
@@ -503,15 +559,25 @@ impl Engine {
 
         Self::additional(&mut app);
 
-        Engine::load_extensions(&mut app);
+        Engine::load_extensions(&mut app, EnabledExts::Disable(Vec::default()));
 
         app
     }
-    fn load_extensions(app: &mut App) {
+    fn load_extensions(app: &mut App, enabled_exts: EnabledExts) {
+        let distrib = if app.world().contains_resource::<Headless>() {
+            EngineExtensionDistribution::Server
+        } else {
+            EngineExtensionDistribution::Client
+        };
         let mut exts: HashMap<&'static str, Box<dyn EngineExtension>> = HashMap::new();
         let mut ext_loaders: HashMap<&'static str, Box<dyn EngineExtension>> = HashMap::new();
         for hook in inventory::iter::<crate::core::extension::EngineExtensionHook>() {
             let ext = hook.0();
+            if !enabled_exts.should_be_enabled(ext.id(), ext.default_enabled())
+                || !ext.distribution().matches(distrib)
+            {
+                continue;
+            }
             if ext.init_level() == EngineExtensionInitLevel::ExtLoader {
                 let id = ext.id();
                 assert!(
@@ -531,6 +597,9 @@ impl Engine {
         }
 
         exts.extend(ext_loaders.into_iter());
+        exts.retain(|id, e| {
+            enabled_exts.should_be_enabled(*id, true) && e.distribution().matches(distrib)
+        });
         for ext in exts.values_mut() {
             ext.engine_build(app);
         }
@@ -538,6 +607,7 @@ impl Engine {
             let exts_clone = exts
                 .iter_mut()
                 .map(|(k, v)| (*k, v.dyn_clone(app)))
+                .filter(|(_, e)| e.distribution().server())
                 .collect::<HashMap<_, _>>();
             app.get_sub_app_mut(IntegratedServer)
                 .unwrap()
@@ -546,7 +616,24 @@ impl Engine {
         }
         app.world_mut().insert_resource(EngineExtensions(exts));
     }
+    fn parse_enabled_exts(args: &ArgMatches, enabled_exts: &mut EnabledExts) {
+        if let Some(enabled) = args.get_one::<String>("enabled-exts") {
+            *enabled_exts = EnabledExts::Enable(enabled.split(",").map(|x| x.to_owned()).collect());
+        } else if let Some(disable) = args.get_one::<String>("disable-exts") {
+            *enabled_exts =
+                EnabledExts::Disable(disable.split(",").map(|x| x.to_owned()).collect());
+        }
+    }
+
     fn parse_fast_flags(args: &ArgMatches) {
+        if args.get_flag("fastflags") {
+            println!("NAME TYPE DEFAULT");
+            for (name, ty) in FAST_FLAGS.names_and_types() {
+                let v = FAST_FLAGS.fetch_dyn(name).unwrap();
+                println!("{name} {ty} {v}");
+            }
+            exit(0);
+        }
         if let Some(fastflags) = args.get_occurrences("fastflag") {
             let ff_types = FAST_FLAGS.names_and_types().collect::<HashMap<_, _>>();
             for mut occurence in fastflags {
@@ -600,15 +687,16 @@ impl Engine {
     #[inline(always)]
     pub fn main() {
         let args = clap::command!()
-            .color(clap::ColorChoice::Always)
             .arg(
                 clap::Arg::new("headless")
+                    .help_heading("Runtime")
                     .long("headless")
                     .long_help("Run the engine in server mode")
                     .action(ArgAction::SetTrue),
             )
             .arg(
                 clap::Arg::new("integrated-server")
+                    .help_heading("Runtime")
                     .long("integrated-server")
                     .help("Adds an integrated server to a client")
                     .long_help("Adds an integrated server to the client build.\nIncompatible with --headless")
@@ -617,6 +705,7 @@ impl Engine {
             )
             .arg(
                 clap::Arg::new("fastflag")
+                    .help_heading("Config")
                     .short('f')
                     .long("fastflag")
                     .help("Set a fast flag")
@@ -624,7 +713,38 @@ impl Engine {
                     .value_parser(value_parser!(String)),
             )
             .arg(
-                clap::Arg::new("dryrun")
+                clap::Arg::new("fastflags")
+                    .help_heading("Config")
+                    .long("fastflags")
+                    .help("Show available fastflags")
+                    .long_help("Show available fastflags and their corresponding types and defaults\nThis is printed as a table with 3 columns, the header and the values following it.")
+                    .action(ArgAction::SetTrue)
+            )
+            .arg(
+                clap::Arg::new("enabled-exts")
+                    .help_heading("Config")
+                    .long("enabled-exts")
+                    .help("Only enable these extensions")
+                    .long_help("Only enable these extensions.\nThe list of extensions is as a single, comma separated argument.")
+                    .conflicts_with("disable-exts")
+                    .value_names(["EXTENSIONS"])
+                    .action(ArgAction::Set)
+                    .value_parser(value_parser!(String)),
+            )
+            .arg(
+                clap::Arg::new("disable-exts")
+                    .help_heading("Config")
+                    .long("disable-exts")
+                    .help("Enable default and disable these extensions")
+                    .long_help("Enable default and disable thes extensions\nThe list of extensions is as a single, comma separated argument.")
+                    .conflicts_with("enabled-exts")
+                    .value_names(["EXTENSIONS"])
+                    .action(ArgAction::Set)
+                    .value_parser(value_parser!(String)),
+            )
+            .arg(
+                clap::Arg::new("dry-run")
+                    .help_heading("Runtime")
                     .short('n')
                     .long("dry-run")
                     .help("Initialize the app and exit after")
@@ -632,17 +752,22 @@ impl Engine {
             )
             .arg(
                 clap::Arg::new("debug")
-                    .short('d')
-                    .long("debug")
-                    .help("Enable debug logging")
-                    .action(ArgAction::SetTrue),
+                    .short('v')
+                    .long("verbose")
+                    .alias("debug")
+                    .help("Enable verbose logging")
+                    .long_help("Enable verbose logging\nPassing this twice enables trace logging")
+                    .action(ArgAction::Count),
             )
             .get_matches();
         let mut app;
 
         Engine::parse_fast_flags(&args);
 
-        DEBUG_FLAG.store(args.get_flag("debug"), std::sync::atomic::Ordering::Relaxed);
+        VERBOSE_FLAG.store(
+            args.get_count("debug"),
+            std::sync::atomic::Ordering::Relaxed,
+        );
 
         if args.get_flag("headless") {
             app = Engine::headless();
@@ -652,10 +777,11 @@ impl Engine {
         if args.get_flag("integrated-server") {
             Engine::insert_integrated_server(&mut app);
         }
+        let mut enabled_exts = EnabledExts::Disable(Vec::new());
+        Engine::parse_enabled_exts(&args, &mut enabled_exts);
+        Engine::load_extensions(&mut app, enabled_exts);
 
-        Engine::load_extensions(&mut app);
-
-        if args.get_flag("dryrun") {
+        if args.get_flag("dry-run") {
             println!("dry run, exiting the app");
             exit(0);
         }

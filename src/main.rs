@@ -28,6 +28,7 @@ pub mod internal {
 
     pub use mlua::Error as LuaError;
     pub use mlua::FromLua;
+    pub use mlua::Lua;
     pub use mlua::MultiValue as LuaMultiValue;
     pub use mlua::Result as LuaResult;
 
@@ -36,6 +37,8 @@ pub mod internal {
 
     pub use crate::core::lua::singleton::SingletonRegisterFn;
 
+    pub use bevy::ecs::component::Component;
+    pub use bevy::reflect::Reflect;
     pub use static_assertions::assert_impl_all;
 }
 
