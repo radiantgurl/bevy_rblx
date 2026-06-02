@@ -1,6 +1,9 @@
 use crate::{
     enums::LuaEnums,
-    userdata::{CFrame, LuaSendRaycastParams, ObjectRef, Ray, RaycastParams, RaycastResult, Vector2, Vector3},
+    userdata::{
+        CFrame, LuaSendRaycastParams, ObjectRef, Ray, RaycastParams, RaycastResult, Vector2,
+        Vector3,
+    },
 };
 
 use bevy::{math::Vec3, reflect::Reflect};
@@ -29,7 +32,7 @@ pub enum LuaFreeValue {
     Enums,
     Ray(Ray),
     RaycastParams(LuaSendRaycastParams),
-    RaycastResult(RaycastResult)
+    RaycastResult(RaycastResult),
 }
 
 impl FromLua for LuaFreeValue {
@@ -78,7 +81,9 @@ impl FromLua for LuaFreeValue {
                     "RaycastParams" => Ok(LuaFreeValue::RaycastParams(
                         any_user_data.borrow::<RaycastParams>()?.as_send()?,
                     )),
-                    "RaycastResult" => Ok(LuaFreeValue::RaycastResult(any_user_data.borrow::<RaycastResult>()?.clone_lua(lua))),
+                    "RaycastResult" => Ok(LuaFreeValue::RaycastResult(
+                        any_user_data.borrow::<RaycastResult>()?.clone_lua(lua),
+                    )),
                     _ => todo!(
                         "serializing to free value not implemented for userdata type {type_name}"
                     ),
@@ -120,7 +125,9 @@ impl IntoLua for LuaFreeValue {
             LuaFreeValue::RaycastParams(lua_send_raycast_params) => {
                 lua_send_raycast_params.into_lua(lua)
             }
-            LuaFreeValue::RaycastResult(raycast_result) => raycast_result.clone_lua(lua).into_lua(lua),
+            LuaFreeValue::RaycastResult(raycast_result) => {
+                raycast_result.clone_lua(lua).into_lua(lua)
+            }
         }
     }
 }
@@ -154,7 +161,9 @@ impl IntoLua for &LuaFreeValue {
             LuaFreeValue::RaycastParams(lua_send_raycast_params) => {
                 lua_send_raycast_params.clone().into_lua(lua)
             }
-            LuaFreeValue::RaycastResult(raycast_result) => raycast_result.clone_lua(lua).into_lua(lua)
+            LuaFreeValue::RaycastResult(raycast_result) => {
+                raycast_result.clone_lua(lua).into_lua(lua)
+            }
         }
     }
 }

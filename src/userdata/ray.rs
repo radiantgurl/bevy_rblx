@@ -113,6 +113,22 @@ impl LuaUserData for RaycastParams {
             Ok(())
         });
     }
+
+    fn add_methods<M: LuaUserDataMethods<Self>>(methods: &mut M) {
+        methods.add_method("AddToFilter", |lua, t, v: LuaValue| {
+            let self_table = &t.filter_descendants_instances;
+            if v.is_table() {
+                let table = v.as_table().unwrap();
+                for i in 1..=table.raw_len() {
+                    self_table.raw_push(table.raw_get::<LuaValue>(i)?)?;
+                }
+                Ok(())
+            } else {
+                self_table.raw_push(ObjectRef::from_lua(v, lua)?)?;
+                Ok(())
+            }
+        });
+    }
 }
 
 impl RaycastParams {
@@ -239,5 +255,18 @@ impl RaycastResult {
             position: self.position,
             normal: self.normal,
         }
+    }
+}
+
+#[register]
+impl LuaSingleton for RaycastParams {
+    fn register_singleton(lua: &Lua) -> LuaResult<()> {
+        let table = lua.create_table()?;
+        table.raw_set(
+            "new",
+            lua.create_function(|l, ()| LuaSendRaycastParams::default().into_lua(l))?,
+        )?;
+        table.set_readonly(true);
+        lua.globals().raw_set("RaycastParams", table)
     }
 }
