@@ -1,9 +1,6 @@
-use std::{
-    ops::DerefMut,
-    sync::{
-        Arc, Weak,
-        atomic::{AtomicBool, Ordering},
-    },
+use std::sync::{
+    Arc, Weak,
+    atomic::{AtomicBool, Ordering},
 };
 
 use crate::{
@@ -291,31 +288,14 @@ impl RBXScriptSignal {
                     interrupt_early.store(true, Ordering::Relaxed);
 
                     // NOTE: Lua will give up its app data when its ready to be accessed (ReentrantMutex)
-                    {
-                        let mut internal_world_access = WorldAccess::fetch(lua);
-                        let mut external_world_access = WorldAccess::fetch(external_lua);
-                        internal_world_access.assert_valid();
-                        std::mem::swap(
-                            internal_world_access.deref_mut(),
-                            external_world_access.deref_mut(),
-                        );
-                    }
+                    let _swap_guard = WorldAccess::borrow_into_lua(lua, external_lua);
                     let res = Self::fire_internal(
                         external_lua,
-                        values,
+                        values.clone(),
                         &container.registry,
                         ancestry_fire,
                     );
-                    {
-                        let mut internal_world_access = WorldAccess::fetch(lua);
-                        let mut external_world_access = WorldAccess::fetch(external_lua);
-                        std::mem::swap(
-                            internal_world_access.deref_mut(),
-                            external_world_access.deref_mut(),
-                        );
-                        internal_world_access.assert_valid();
-                    }
-                    return res;
+                    res?;
                 }
             }
         }
@@ -366,18 +346,14 @@ impl RBXScriptSignal {
             ) {
                 interrupt_early.store(true, Ordering::Relaxed);
                 // NOTE: Lua will give up its app data when its ready to be accessed (ReentrantMutex)
-                {
-                    let mut external_world_access = WorldAccess::fetch(external_lua);
-                    std::mem::swap(internal_world_access, external_world_access.deref_mut());
-                }
-                let res =
-                    Self::fire_internal(external_lua, values, &container.registry, ancestry_fire);
-                {
-                    let mut external_world_access = WorldAccess::fetch(external_lua);
-                    std::mem::swap(internal_world_access, external_world_access.deref_mut());
-                }
-                internal_world_access.assert_valid();
-                return res;
+                let _swap_guard = internal_world_access.borrow_into(external_lua);
+                let res = Self::fire_internal(
+                    external_lua,
+                    values.clone(),
+                    &container.registry,
+                    ancestry_fire,
+                );
+                res?;
             }
         }
         Ok(())
