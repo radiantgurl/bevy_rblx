@@ -56,7 +56,7 @@ jobs:
           target
         key: ${{ github.workflow }}-${{ github.ref_name }}
         restore-keys: |
-          ${{ github.workflow }}-master/push
+          ${{ github.workflow }}-master
           ${{ github.workflow }}-
     - name: Build
       run: cargo build
