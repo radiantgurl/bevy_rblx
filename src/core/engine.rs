@@ -905,6 +905,27 @@ impl Engine {
             Engine::assert_no_errors(w.resource::<RblxLogs>());
         }
     }
+
+    #[cfg(test)]
+    pub fn test_mode_lua_load(app: &mut App, code: &str) {
+        use crate::core::object::RootInstance;
+        use bevy::app::PostStartup;
+        use bevy::ecs::{entity::Entity, query::With};
+
+        let code_string = code.to_string();
+        app.add_systems(PostStartup, move |w: &mut World| {
+            let lua = {
+                let game = w
+                    .query_filtered::<Entity, With<RootInstance>>()
+                    .single(w)
+                    .unwrap();
+                w.get::<LuauContainer>(game).unwrap().lua.clone()
+            };
+            lua.load(format!("task.defer(function() {code_string} end)"))
+                .exec()
+                .unwrap();
+        });
+    }
 }
 
 fast_flag!(FFShutdownTimeout: f64 = 30.0);

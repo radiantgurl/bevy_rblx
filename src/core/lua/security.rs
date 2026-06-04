@@ -1,4 +1,9 @@
+#[cfg(test)]
+use crate::{core::FAST_FLAGS, internal_prelude::*};
+#[cfg(test)]
+use bevy_rblx_derive::fast_flag;
 use std::ops::BitOr;
+
 #[derive(Eq, PartialEq, Clone, Copy, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct SecurityContext(u8);
@@ -51,6 +56,11 @@ impl BitOr for SecurityContext {
 }
 
 impl SecurityContext {
+    #[cfg(test)]
+    pub fn has(self, other: SecurityContext) -> bool {
+        (self.0 & other.0) == other.0 || FAST_FLAGS.fetch::<FFDisableSecurity>()
+    }
+    #[cfg(not(test))]
     pub const fn has(self, other: SecurityContext) -> bool {
         (self.0 & other.0) == other.0
     }
@@ -122,3 +132,5 @@ impl ThreadIdentityType {
         }
     }
 }
+#[cfg(test)]
+fast_flag!(FFDisableSecurity: bool = false);
