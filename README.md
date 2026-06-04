@@ -21,7 +21,7 @@ If you have rustup intalled, simply run `cargo install bevy_rblx` to install it.
 
 ## Contributing
 
-Want to contribute? Open a pull request! I'd be more than happy to take a look at it. 🙂
+Want to contribute? Open a pull request! I'd be more than happy to take a look at it :)
 
 ## Special thanks
 
