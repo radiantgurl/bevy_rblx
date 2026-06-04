@@ -1,33 +1,61 @@
-name: Rust
+name: GHA
 
 on:
-  - pull_request
-
+  pull_request:
+  push:
+    branches:
+      - main
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  format:
-    name: Format
+  preliminary_check:
+    name: Preliminary checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Check for file changes
+        id: file_changes
+        run: |
+          git fetch origin master
+          if git diff --name-only origin/master ${{ github.sha }} | grep -E '^(Cargo\.toml|Cargo\.lock|src/)' > /dev/null; then
+            echo "files_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "files_changed=false" >> $GITHUB_OUTPUT
+          fi
       - name: Install cargo-fmt
+        if: ${{ steps.file_changes.outputs.files_changed == 'true' }}
         run: rustup component add --toolchain nightly-x86_64-unknown-linux-gnu rustfmt
       - name: Check formatting
+        if: ${{ steps.file_changes.outputs.files_changed == 'true' }}
         run: cargo fmt --check
+    outputs:
+      files_changed: ${{ steps.file_changes.outputs.files_changed }}
   build:
     name: Build and test (Linux)
     runs-on: ubuntu-latest
-
     needs:
-      - format
-
+      - preliminary_check
+    if: ${{ success() && needs.preliminary_check.outputs.files_changed == 'true' }}
     steps:
     - uses: actions/checkout@v4
     - name: Install prerequisites
       run: sudo apt-get -qy update && sudo apt-get install -fy libwayland-dev libasound2-dev libudev-dev && rustup default nightly
+    - name: Cache cargo build artifacts
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ github.workflow }}-${{ github.ref_name }}
+        restore-keys: |
+          ${{ github.workflow }}-master/push
+          ${{ github.workflow }}-
     - name: Build
-      run: cargo build --verbose
+      run: cargo build
     - name: Run tests
       run: cargo test --verbose
