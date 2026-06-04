@@ -102,7 +102,10 @@ register_class! {
     }
 }
 
-pub fn register_game_and_workspace_global(w: &mut World) {
+pub fn register_game_and_workspace_global(w: &mut World, mut placeholder: Local<Option<World>>) {
+    if placeholder.is_none() {
+        *placeholder = Some(World::new());
+    }
     let game = w
         .query_filtered::<Entity, With<RootInstance>>()
         .single(w)
@@ -117,16 +120,13 @@ pub fn register_game_and_workspace_global(w: &mut World) {
         .map(|x| x.lua.clone())
         .collect::<Vec<_>>();
     for lua in containers {
-        unsafe {
-            WorldAccess::fetch(&lua).insert_sync_access(w);
-            lua.globals()
-                .raw_set("game", ObjectRef::new(&lua, game))
-                .unwrap();
-            lua.globals()
-                .raw_set("workspace", ObjectRef::new(&lua, workspace))
-                .unwrap();
-        }
-        WorldAccess::fetch(&lua).clear_sync_access(w)
+        let _guard = WorldAccess::fetch(&lua).insert_sync_access(w, &mut placeholder, &lua);
+        lua.globals()
+            .raw_set("game", ObjectRef::new(&lua, game))
+            .unwrap();
+        lua.globals()
+            .raw_set("workspace", ObjectRef::new(&lua, workspace))
+            .unwrap();
     }
 }
 

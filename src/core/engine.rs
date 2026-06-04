@@ -1,5 +1,5 @@
 use std::{
-    mem::{swap, take},
+    mem::take,
     process::exit,
     sync::{Arc, atomic::AtomicU8},
     time::{Duration, Instant},
@@ -48,7 +48,7 @@ use crate::{
         lua::{
             FFTaskSchedulerTimeSensitive, clock,
             luau::{assign_provenance, create_provenance, erase_provenance},
-            world_access::WorldAccessDestructor,
+            world_access::{WorldAccessDestructor, WorldAccessDesyncGuard},
         },
         object::{
             DisabledObject, NewInstanceEvent, RunServiceMembers,
@@ -67,24 +67,17 @@ pub struct Engine;
 #[derive(Resource, Clone, Copy)]
 pub struct ShutdownReason(pub CloseReason);
 
-fn take_world_local(l: &mut Option<World>, real_world: &mut World) -> World {
-    let mut fake_world = l.take().unwrap();
-    swap(&mut fake_world, real_world);
-    fake_world
-}
-fn put_world_local(l: &mut Option<World>, mut fake_world: World, real_world: &mut World) {
-    swap(&mut fake_world, real_world);
-    *l = Some(fake_world);
-}
-
 pub(super) fn initialize(w: &mut World) {
+    let mut placeholder = Some(World::new());
     let container = LuauContainer::default();
     clock(); // initialize clock
     let root_instance;
     {
-        unsafe {
-            WorldAccess::fetch(&container.lua).insert_sync_access(w);
-        }
+        let _guard = WorldAccess::fetch(&container.lua).insert_sync_access(
+            w,
+            &mut placeholder,
+            &container.lua,
+        );
 
         root_instance = instance_new(&container.lua, "DataModel".to_owned())
             .unwrap()
@@ -93,8 +86,6 @@ pub(super) fn initialize(w: &mut World) {
         instance_new(&container.lua, "RunService".to_owned()).unwrap();
         instance_new(&container.lua, "CollectionService".to_owned()).unwrap();
         instance_new(&container.lua, "Workspace".to_owned()).unwrap();
-
-        WorldAccess::fetch(&container.lua).clear_sync_access(w);
     }
     {
         let mut c = w.commands();
@@ -103,7 +94,10 @@ pub(super) fn initialize(w: &mut World) {
     w.entity_mut(root_instance).insert(container);
 }
 
-pub(super) fn run_synchronized(world: &mut World) {
+pub(super) fn run_synchronized(world: &mut World, mut placeholder: Local<Option<World>>) {
+    if placeholder.is_none() {
+        *placeholder = Some(World::new());
+    }
     let mut containers = world.query::<&LuauContainer>();
 
     let lua_cloned_iter = containers
@@ -111,35 +105,30 @@ pub(super) fn run_synchronized(world: &mut World) {
         .map(|c| c.lua.clone())
         .collect::<Vec<_>>();
     for lua in lua_cloned_iter {
-        unsafe { WorldAccess::fetch(&lua).insert_sync_access(world) };
+        let _guard = WorldAccess::fetch(&lua).insert_sync_access(world, &mut placeholder, &lua);
 
         TaskScheduler::fetch(&lua).run(&lua, false, true, Duration::from_secs(0), None);
         lua.gc_collect().unwrap();
-
-        WorldAccess::fetch(&lua).clear_sync_access(world);
     }
 }
-pub(super) fn run_desynchronized(world: &mut World, mut l: Local<Option<World>>) {
-    if l.is_none() {
-        *l = Some(World::new());
+pub(super) fn run_desynchronized(world: &mut World, mut placeholder: Local<Option<World>>) {
+    if placeholder.is_none() {
+        *placeholder = Some(World::new());
     }
     let mut containers_qs = world.query::<&LuauContainer>();
     let v = containers_qs
         .iter(world)
         .map(|x| x.lua.clone())
         .collect::<Vec<_>>();
-    let arc = Arc::new(take_world_local(&mut l, world));
-    let queues = v.as_slice().par_chunk_map(
+    let mut guard = WorldAccessDesyncGuard::new(world, &mut placeholder);
+    for i in v.iter() {
+        guard.insert_mut(i);
+    }
+    let _queues = v.as_slice().par_chunk_map(
         ComputeTaskPool::get(),
         (v.len() / ComputeTaskPool::get().thread_num()).max(1),
         |_, containers| {
-            let mut thread_queue = CommandQueue::default();
             for container in containers {
-                unsafe {
-                    let mut wa = WorldAccess::fetch(container);
-                    wa.insert_desync_access(arc.clone());
-                }
-
                 TaskScheduler::fetch(&container).run(
                     &container,
                     true,
@@ -147,28 +136,20 @@ pub(super) fn run_desynchronized(world: &mut World, mut l: Local<Option<World>>)
                     Duration::from_secs(0),
                     None,
                 );
-
-                let mut wa = WorldAccess::fetch(container);
-                wa.assert_valid();
-                let mut queue = wa
-                    .clear_desync_access()
-                    .expect("desynced world has command queue");
-                thread_queue.append(&mut queue);
+                #[cfg(debug_assertions)]
+                {
+                    let wa = WorldAccess::fetch(container);
+                    wa.assert_valid();
+                }
             }
-            thread_queue
         },
     );
-    put_world_local(
-        &mut l,
-        Arc::into_inner(arc).expect("Failed to unwrap world"),
-        world,
-    );
-    for mut i in queues {
-        i.apply(world);
-    }
 }
 
-pub(super) fn dispatch_synchronized(world: &mut World) {
+pub(super) fn dispatch_synchronized(world: &mut World, mut placeholder: Local<Option<World>>) {
+    if placeholder.is_none() {
+        *placeholder = Some(World::new());
+    }
     let mut containers = world.query::<&LuauContainer>();
 
     let lua_cloned_iter = containers
@@ -176,34 +157,29 @@ pub(super) fn dispatch_synchronized(world: &mut World) {
         .map(|c| c.lua.clone())
         .collect::<Vec<_>>();
     for lua in lua_cloned_iter {
-        unsafe { WorldAccess::fetch(&lua).insert_sync_access(world) };
+        let _guard = WorldAccess::fetch(&lua).insert_sync_access(world, &mut placeholder, &lua);
 
         TaskScheduler::fetch(&lua).run(&lua, false, false, Duration::from_secs(0), None);
-
-        WorldAccess::fetch(&lua).clear_sync_access(world);
     }
 }
-pub(super) fn dispatch_desynchronized(world: &mut World, mut l: Local<Option<World>>) {
-    if l.is_none() {
-        *l = Some(World::new());
+pub(super) fn dispatch_desynchronized(world: &mut World, mut placeholder: Local<Option<World>>) {
+    if placeholder.is_none() {
+        *placeholder = Some(World::new());
     }
     let mut containers_qs = world.query::<&LuauContainer>();
     let v = containers_qs
         .iter(world)
         .map(|x| x.lua.clone())
         .collect::<Vec<_>>();
-    let arc = Arc::new(take_world_local(&mut l, world));
-    let queues = v.as_slice().par_chunk_map(
+    let mut guard = WorldAccessDesyncGuard::new(world, &mut placeholder);
+    for i in v.iter() {
+        guard.insert_mut(i);
+    }
+    let _queues = v.as_slice().par_chunk_map(
         ComputeTaskPool::get(),
         (v.len() / ComputeTaskPool::get().thread_num()).max(1),
         |_, containers| {
-            let mut thread_queue = CommandQueue::default();
             for container in containers {
-                unsafe {
-                    let mut wa = WorldAccess::fetch(container);
-                    wa.insert_desync_access(arc.clone());
-                }
-
                 TaskScheduler::fetch(&container).run(
                     &container,
                     true,
@@ -211,25 +187,9 @@ pub(super) fn dispatch_desynchronized(world: &mut World, mut l: Local<Option<Wor
                     Duration::from_secs(0),
                     None,
                 );
-
-                let mut wa = WorldAccess::fetch(container);
-                wa.assert_valid();
-                let mut queue = wa
-                    .clear_desync_access()
-                    .expect("desynced world has command queue");
-                thread_queue.append(&mut queue);
             }
-            thread_queue
         },
     );
-    put_world_local(
-        &mut l,
-        Arc::into_inner(arc).expect("Failed to unwrap world"),
-        world,
-    );
-    for mut i in queues {
-        i.apply(world);
-    }
 }
 
 fn bind_close_system_runner(mut app_exit: MessageReader<AppExit>, mut c: Commands) {
@@ -275,19 +235,20 @@ macro_rules! create_runservice_trigger {
             pub fn trigger_runservice_event(
                 w: &mut World,
                 mut cached_event: Local<Option<RBXScriptSignal>>,
+                mut placeholder_world: Local<Option<World>>,
             ) -> Result<(), BevyError> {
                 if cached_event.is_none() {
                     let mut members_qs = w.query::<&RunServiceMembers>();
                     let members = members_qs.single(w).expect("run service is initialized");
                     *cached_event = Some(members.$name.reference());
                 }
+                if placeholder_world.is_none() {
+                    *placeholder_world = Some(World::default());
+                }
 
                 let time = w.resource::<Time>().clone();
 
-                let mut wa = WorldAccess::default();
-                unsafe {
-                    wa.insert_sync_access(w);
-                }
+                let mut wa = WorldAccess::create(w, &mut placeholder_world);
 
                 if stringify!($name) == "Stepped" {
                     cached_event.as_ref().unwrap().fire_outside_lua(
@@ -302,8 +263,6 @@ macro_rules! create_runservice_trigger {
                         time.delta_secs_f64(),
                     )?;
                 }
-                wa.assert_valid();
-                wa.clear_sync_access(w);
                 Ok(())
             }
         });
@@ -801,6 +760,8 @@ impl Engine {
     }
 
     pub fn shutdown(w: &mut World) {
+        let mut placeholder_world = Some(World::default());
+
         ext_pre_shutdown(w);
         let close = w
             .query::<&ServiceProviderMembers>()
@@ -819,19 +780,14 @@ impl Engine {
             .unwrap_or(CloseReason::Unknown);
         let prev = FAST_FLAGS.fetch::<FFSignalBehavior>();
         {
-            let mut wa = WorldAccess::default();
-            unsafe {
-                wa.insert_sync_access(w);
-            }
+            let mut wa = WorldAccess::create(w, &mut placeholder_world);
             FAST_FLAGS.store::<FFSignalBehavior>(SignalBehavior::Deferred as u64);
             close.fire_outside_lua(&mut wa, false, reason).unwrap();
-            wa.clear_sync_access(w);
         }
         {
             FAST_FLAGS.store::<FFSignalBehavior>(prev);
             FAST_FLAGS.store::<FFTaskSchedulerTimeSensitive>(true);
             let timer = Instant::now();
-            let mut fake_world = Some(World::new());
             let mut waiting = containers_qs
                 .iter(w)
                 .map(|x| {
@@ -845,9 +801,11 @@ impl Engine {
             loop {
                 for (lua, still_waiting) in waiting.iter_mut() {
                     if *still_waiting {
-                        unsafe {
-                            WorldAccess::fetch(lua).insert_sync_access(w);
-                        }
+                        let _guard = WorldAccess::fetch(lua).insert_sync_access(
+                            w,
+                            &mut placeholder_world,
+                            lua,
+                        );
                         let task = TaskScheduler::fetch(lua);
                         task.run(
                             lua,
@@ -860,17 +818,13 @@ impl Engine {
                                     .unwrap_or_default(),
                             ),
                         );
-                        WorldAccess::fetch(lua).clear_sync_access(w);
                         *still_waiting = task.still_waiting_shutdown();
                     }
                 }
-                let arc_world = Arc::new(take_world_local(&mut fake_world, w));
-                let mut queue = CommandQueue::default();
+                let mut desync_guard = WorldAccessDesyncGuard::new(w, &mut placeholder_world);
                 for (lua, still_waiting) in waiting.iter_mut() {
                     if *still_waiting {
-                        unsafe {
-                            WorldAccess::fetch(lua).insert_desync_access(arc_world.clone());
-                        }
+                        desync_guard.insert_mut(lua);
                         let task = TaskScheduler::fetch(lua);
                         task.run(
                             lua,
@@ -883,14 +837,9 @@ impl Engine {
                                     .unwrap_or_default(),
                             ),
                         );
-                        if let Some(mut q) = WorldAccess::fetch(lua).clear_desync_access() {
-                            queue.append(&mut q);
-                        }
                         *still_waiting = task.still_waiting_shutdown();
                     }
                 }
-                put_world_local(&mut fake_world, Arc::into_inner(arc_world).unwrap(), w);
-                queue.apply(w);
                 if !waiting.iter().any(|(_, f)| *f) {
                     break;
                 }
