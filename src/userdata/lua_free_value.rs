@@ -22,14 +22,18 @@ pub enum LuaFreeValue {
     Number(lua_Number),
     Vector(Vec3),
     String(String),
+    Buffer(Vec<u8>),
+
     Object(ObjectRef),
+
     CFrame(CFrame),
     Vector3(Vector3),
     Vector2(Vector2),
-    Buffer(Vec<u8>),
+
     EnumItem(String, String),
     Enum(String),
     Enums,
+
     Ray(Ray),
     RaycastParams(LuaSendRaycastParams),
     RaycastResult(RaycastResult),

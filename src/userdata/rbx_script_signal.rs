@@ -358,13 +358,13 @@ impl RBXScriptSignal {
         ancestry_fire: bool,
         values: impl IntoLuaMulti + Clone + LuaSend,
     ) -> LuaResult<()> {
+        internal_world_access.assert_valid();
         for (_, container) in self.container_tables.read().iter() {
             if let (Some(interrupt_early), Some(external_lua)) = &(
                 container.interrupt_early.upgrade(),
                 container.weak_lua.try_upgrade(),
             ) {
                 interrupt_early.store(true, Ordering::Relaxed);
-                internal_world_access.assert_valid();
                 // NOTE: Lua will give up its app data when its ready to be accessed (ReentrantMutex)
                 {
                     let mut external_world_access = WorldAccess::fetch(external_lua);
