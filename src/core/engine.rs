@@ -33,6 +33,7 @@ use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 use bevy_rblx_derive::fast_flag;
 use clap::{ArgAction, ArgMatches, value_parser};
 use parking_lot::Mutex;
+use avian3d::prelude::*;
 
 use crate::{
     core::{
@@ -436,6 +437,7 @@ impl Engine {
             },
             ..Default::default()
         }));
+        app.add_plugins(PhysicsPlugins::default());
 
         Self::additional(&mut app);
 
@@ -453,6 +455,7 @@ impl Engine {
             ..Default::default()
         }));
         app.add_plugins(EguiPlugin::default());
+        app.add_plugins(PhysicsPlugins::default());
         if cfg!(debug_assertions) {
             app.add_plugins(WorldInspectorPlugin::default());
         } else {

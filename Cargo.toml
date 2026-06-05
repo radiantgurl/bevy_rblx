@@ -26,6 +26,7 @@ ptree = "^0.5"
 rbx_binary = "^2.0"
 static_assertions = { version = "^1.1", features = ["nightly"] }
 arboard = { version = "^3.x", features = ["wl-clipboard-rs", "wayland-data-control"]}
+avian3d = "0.6"
 
 [workspace]
 members = ["crates/bevy_rblx_derive"]
