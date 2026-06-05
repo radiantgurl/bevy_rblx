@@ -5,6 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use avian3d::prelude::*;
 #[cfg(test)]
 use bevy::ecs::message::MessageWriter;
 use bevy::{
@@ -33,7 +34,6 @@ use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 use bevy_rblx_derive::fast_flag;
 use clap::{ArgAction, ArgMatches, value_parser};
 use parking_lot::Mutex;
-use avian3d::prelude::*;
 
 use crate::{
     core::{
