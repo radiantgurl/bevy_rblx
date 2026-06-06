@@ -343,6 +343,7 @@ impl TaskScheduler {
                 let mut still_waiting_delay = Vec::new();
                 let new_delay_threads = take(&mut self.cell.borrow_mut().delay_threads[pd]);
                 for (t, i, d, v) in new_delay_threads {
+                    println!("thread {:x?} status {:?}", t.to_pointer(), t.status());
                     if t.status() == LuaThreadStatus::Resumable {
                         if Instant::now().duration_since(i) >= d {
                             if let Err(e) = t.resume::<()>(v) {
@@ -358,6 +359,7 @@ impl TaskScheduler {
                 let mut still_waiting_wait = Vec::new();
                 let new_waiting_threads = take(&mut self.cell.borrow_mut().wait_threads[pd]);
                 for (t, i, d) in new_waiting_threads {
+                    println!("thread {:x?} status {:?}", t.to_pointer(), t.status());
                     if t.status() == LuaThreadStatus::Resumable {
                         if Instant::now().duration_since(i) >= d {
                             if let Err(e) =

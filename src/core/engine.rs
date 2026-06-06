@@ -109,7 +109,9 @@ pub(super) fn run_synchronized(world: &mut World, mut placeholder: Local<Option<
         let _guard = WorldAccess::fetch(&lua).insert_sync_access(world, &mut placeholder, &lua);
 
         TaskScheduler::fetch(&lua).run(&lua, false, true, Duration::from_secs(0), None);
-        lua.gc_collect().unwrap();
+        if !FAST_FLAGS.fetch::<FFDisableLuauGC>() {
+            lua.gc_collect().unwrap();
+        }
     }
 }
 pub(super) fn run_desynchronized(world: &mut World, mut placeholder: Local<Option<World>>) {
@@ -908,3 +910,4 @@ impl Engine {
 }
 
 fast_flag!(FFShutdownTimeout: f64 = 30.0);
+fast_flag!(FFDisableLuauGC: bool = false);
