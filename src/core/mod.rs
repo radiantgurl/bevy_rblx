@@ -6,6 +6,7 @@ pub(crate) mod internal_prelude;
 pub(crate) mod logs;
 pub mod lua;
 pub mod object;
+pub mod templates;
 
 pub use engine::{Engine, FFShutdownTimeout, Headless, SchedulerPhase, ShutdownReason};
 pub use fastflags::{FAST_FLAGS, FastFlagKey, FastFlagType, FastFlagValue, FastFlags};

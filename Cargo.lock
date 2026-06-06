@@ -1477,7 +1477,7 @@ checksum = "c7a9329e8dc4e01ced480eeec4902e6d7cb56e56ec37f6fbc4323e5c937290a7"
 
 [[package]]
 name = "bevy_rblx"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "arboard",
  "avian3d",
@@ -1501,7 +1501,7 @@ dependencies = [
 
 [[package]]
 name = "bevy_rblx_derive"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "concat-idents",
  "convert_case 0.11.0",

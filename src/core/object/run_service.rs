@@ -79,9 +79,9 @@ register_class! {
         pub stepped: RBXScriptSignal,
 
         #[reflect_opaque]
-        pub(super) priv render_callbacks: LuaPrioCallbackTableCached<true, ()>,
+        pub(super) priv render_callbacks: LuaPrioCallbackTableCached<()>,
         #[reflect_opaque]
-        pub(super) priv simulation_callbacks: LuaPrioCallbackTableCached<true, StepFrequency>,
+        pub(super) priv simulation_callbacks: LuaPrioCallbackTableCached<StepFrequency>,
 
         pub(super) priv render_ids: HashMap<String, usize>,
     }

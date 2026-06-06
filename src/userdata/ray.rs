@@ -2,7 +2,7 @@ use crate::{
     core::lua::{DynamicLuaVec, LuaSingleton},
     enums::{Material, RaycastFilterType},
     internal_prelude::*,
-    userdata::{ObjectRef, ObjectRefCollectionExt, Vector3},
+    userdata::{ObjectRef, Vector3},
 };
 use bevy::prelude::*;
 use bevy_rblx_derive::register;

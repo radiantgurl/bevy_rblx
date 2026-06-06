@@ -187,6 +187,8 @@ mod sealed {
     pub(crate) use {lua_todo, lua_unimplemented};
 }
 
+pub(crate) use crate::userdata::LuaValueExt;
+pub(crate) use crate::userdata::ObjectRefCollectionExt;
 pub(crate) use sealed::AnyUserDataTypedExt as _;
 pub use sealed::IntoLuaThread;
 pub(crate) use sealed::LuaExt as _;

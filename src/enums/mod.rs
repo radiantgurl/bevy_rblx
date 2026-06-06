@@ -5,6 +5,7 @@ bevy_rblx_derive::create_enums!([
     AnimatorRetargetingMode,
     AvatarUnificationMode,
     Axis,
+    BulkMoveMode,
     ClientAnimatorThrottlingMode,
     CloseReason,
     CreatorType,

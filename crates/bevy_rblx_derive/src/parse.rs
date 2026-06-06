@@ -212,6 +212,8 @@ mod kw {
     custom_keyword!(str);
     custom_keyword!(no_reflect);
     custom_keyword!(reflect_opaque);
+    custom_keyword!(ObjectContext);
+    custom_keyword!(changed_aliases);
 
     #[derive(Clone, Copy)]
     pub(crate) struct End;
@@ -617,8 +619,8 @@ pub(crate) struct SetterLuaArgs {
     pub comma: syn::token::Comma,
     pub vtable_ident: Ident,
     pub ampersand: syn::token::And,
-    pub static_lifetime: syn::Lifetime,
-    pub ty: kw::ObjectVTable,
+    pub r#mut: Token![mut],
+    pub ty: kw::ObjectContext,
     pub new_comma: syn::token::Comma,
     pub new_value_ident: Ident,
     pub lua_value_ty: kw::LuaValue,
@@ -629,15 +631,8 @@ impl Parse for SetterLuaArgs {
         let vtable_ident = input.parse()?;
         input.parse::<Token![:]>()?;
         let ampersand = input.parse::<Token![&]>()?;
-        if let Some((l, _)) = input.cursor().lifetime() {
-            if l.ident != "static" {
-                return Err(input.error("expected 'static"));
-            }
-        } else {
-            return Err(input.error("expected 'static"));
-        }
-        let static_lifetime = input.parse::<Lifetime>()?;
-        let ty = input.parse::<kw::ObjectVTable>()?;
+        let r#mut = input.parse()?;
+        let ty = input.parse()?;
         let new_comma = input.parse::<Token![,]>()?;
         let new_value_ident = input.parse()?;
         input.parse::<Token![:]>()?;
@@ -647,10 +642,10 @@ impl Parse for SetterLuaArgs {
             new_value_ident,
             comma,
             ampersand,
-            static_lifetime,
             ty,
             new_comma,
             lua_value_ty,
+            r#mut,
         })
     }
 }
@@ -661,19 +656,19 @@ impl ToTokens for SetterLuaArgs {
             comma,
             vtable_ident,
             ampersand,
-            static_lifetime,
             ty,
             new_comma,
             new_value_ident,
             lua_value_ty,
+            r#mut,
         } = self;
         tokens.extend(quote::quote! {
-            #comma #vtable_ident: #ampersand #static_lifetime bevy_rblx::internal::#ty #new_comma #new_value_ident: #lua_value_ty
+            #comma #vtable_ident: #ampersand #r#mut bevy_rblx::internal::#ty #new_comma #new_value_ident: #lua_value_ty
         })
     }
 }
 pub(crate) type GetterLuaMethod = LuaMethodClosure<GetterLuaArgs, kw::LuaValue>;
-pub(crate) type SetterLuaMethod = LuaMethodClosure<SetterLuaArgs, kw::bool>;
+pub(crate) type SetterLuaMethod = LuaMethodClosure<SetterLuaArgs, UnitType>;
 pub(crate) type PostInitFn = LuaMethodClosure<kw::End, UnitType>;
 
 #[derive(Clone)]
@@ -779,6 +774,7 @@ pub(crate) struct ObjectField {
     pub getter: Option<(GetterLuaMethod, CodeBlock)>,
     pub setter: Option<(SetterLuaMethod, CodeBlock)>,
     pub rename: Option<LitStr>,
+    pub changed_aliases: Vec<LitStr>,
     pub security: Option<Ident>,
     pub default: Option<syn::Expr>,
     pub read_only: Option<kw::read_only>,
@@ -803,6 +799,7 @@ impl Parse for ObjectField {
         let mut read_only = None;
         let mut reflect_opaque = None;
         let mut deprecated_aliases = Vec::new();
+        let mut changed_aliases = Vec::new();
 
         while input.peek(Token![#]) {
             input.parse::<Token![#]>()?;
@@ -845,6 +842,13 @@ impl Parse for ObjectField {
             } else if content.peek(kw::reflect_opaque) {
                 reflect_opaque = Some(content.parse::<kw::reflect_opaque>()?);
                 content.parse::<kw::End>()?;
+            } else if content.peek(kw::changed_aliases) {
+                content.parse::<kw::changed_aliases>()?;
+                content.parse::<Token![=]>()?;
+                let list;
+                let _: Bracket = bracketed!(list in content);
+                let listed = Punctuated::<LitStr, Token![,]>::parse_terminated(&list)?;
+                changed_aliases = listed.into_iter().collect();
             } else {
                 content.parse::<kw::security>()?;
                 content.parse::<Token![=]>()?;
@@ -875,6 +879,7 @@ impl Parse for ObjectField {
             visibility,
             deprecated_aliases,
             reflect_opaque,
+            changed_aliases,
         })
     }
 }

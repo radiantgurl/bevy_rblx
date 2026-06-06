@@ -101,6 +101,7 @@ impl TaskScheduler {
         let pd = task.parallel_dispatch as usize;
         let t = t.into_lua_thread(lua)?;
         task.defer_next_threads[pd].push((t.clone(), values.into_lua_multi(lua)?));
+        println!("deferred thread {:x?}", t.to_pointer());
         Ok(t)
     }
     pub fn defer_next_frame_custom_pd(
@@ -306,12 +307,20 @@ impl TaskScheduler {
 
         if new_frame {
             let defer_new_frame_threads = take(&mut self.cell.borrow_mut().defer_next_threads[pd]);
+            let is_empty = defer_new_frame_threads.is_empty();
             for (t, v) in defer_new_frame_threads {
+                println!("thread {:x?} status {:?}", t.to_pointer(), t.status());
                 if t.status() == LuaThreadStatus::Resumable {
                     if let Err(e) = t.resume::<()>(v) {
                         push_lua_error(lua, e);
                     }
                 }
+            }
+            if !is_empty {
+                println!(
+                    "is empty after: {}",
+                    self.cell.borrow().defer_next_threads[pd].is_empty()
+                );
             }
         }
 

@@ -2,7 +2,7 @@ pub mod collection_service;
 pub mod service_provider;
 
 pub mod object;
-pub use object::{DisabledObject, OBJECT_VTABLES, ObjectHeader, ObjectVTable};
+pub use object::{DisabledObject, OBJECT_VTABLES, ObjectContext, ObjectHeader, ObjectVTable};
 
 pub mod data_model;
 pub use data_model::{

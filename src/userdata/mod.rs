@@ -12,12 +12,15 @@ mod vector3;
 pub use cframe::CFrame;
 pub use color3::Color3;
 pub use lua_free_value::{LuaFreeValue, LuaSend};
-pub use object::{ObjectRef, ObjectRefCollectionExt};
+pub use object::ObjectRef;
 pub use ray::{LuaSendRaycastParams, Ray, RaycastParams, RaycastResult};
 pub use rbx_script_signal::{
     FFSignalBehavior, LuaSendRBXScriptConnection, RBXScriptConnection, RBXScriptSignal,
 };
 pub use vector2::Vector2;
 pub use vector3::Vector3;
+
+pub use lua_free_value::LuaValueExt;
+pub(crate) use object::ObjectRefCollectionExt;
 
 pub use instance::instance_new;

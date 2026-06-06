@@ -680,6 +680,7 @@ impl Engine {
                     .long("fastflags")
                     .help("Show available fastflags")
                     .long_help("Show available fastflags and their corresponding types and defaults\nThis is printed as a table with 3 columns, the header and the values following it.")
+                    .exclusive(true)
                     .action(ArgAction::SetTrue)
             )
             .arg(
@@ -721,10 +722,36 @@ impl Engine {
                     .long_help("Enable verbose logging\nPassing this twice enables trace logging")
                     .action(ArgAction::Count),
             )
+            .arg(
+                clap::Arg::new("list-exts")
+                    .help_heading("Config")
+                    .long("list-exts")
+                    .help("Show a list of all available extensions")
+                    .long_help("Show a list of all available extensions\nOutputs a table with the id, name, default enabled, dynamically removable, initialization level and distribution")
+                    .exclusive(true)
+                    .action(ArgAction::SetTrue)
+            )
             .get_matches();
         let mut app;
 
         Engine::parse_fast_flags(&args);
+
+        if args.get_flag("list-exts") {
+            println!("ID NAME DEFAULT_ENABLED DYN_REMOVABLE INIT_LEVEL DISTRIBUTION");
+            for i in inventory::iter::<crate::core::extension::EngineExtensionHook> {
+                let ext = i.0();
+                println!(
+                    "{} {:?} {} {} {} {}",
+                    ext.id(),
+                    ext.name(),
+                    ext.default_enabled(),
+                    ext.dynamically_removable(),
+                    ext.init_level(),
+                    ext.distribution()
+                );
+            }
+            exit(0);
+        }
 
         VERBOSE_FLAG.store(
             args.get_count("debug"),

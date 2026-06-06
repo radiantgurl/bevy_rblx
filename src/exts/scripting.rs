@@ -299,10 +299,14 @@ register_class! {
     }]
     abstract BaseScript (LuaSourceContainer)
     members {
-        #[setter=fn(lua: &Lua, this: Entity, _vtable: &'static ObjectVTable, value: LuaValue) -> LuaResult<bool> {
+        #[setter=fn(lua: &Lua, this: Entity, ctx: &mut ObjectContext, value: LuaValue) -> LuaResult<()> {
             let new_value = bool::from_lua(value, lua)?;
-            set_enabled(lua, this, new_value)
+            if set_enabled(lua, this, new_value)? {
+                ctx.set_changed();
+            }
+            Ok(())
         }]
+        #[changed_aliases=["Disabled"]]
         enabled: bool,
         #[getter=fn(lua: &Lua, this: Entity, _vtable: &'static ObjectVTable) -> LuaResult<LuaValue> {
             let world_access = WorldAccess::fetch_readonly(lua);
@@ -310,10 +314,14 @@ register_class! {
 
             (!world.get::<BaseScriptMembers>(this).unwrap().enabled).into_lua(lua)
         }]
-        #[setter=fn(lua: &Lua, this: Entity, _vtable: &'static ObjectVTable, value: LuaValue) -> LuaResult<bool> {
+        #[setter=fn(lua: &Lua, this: Entity, ctx: &mut ObjectContext, value: LuaValue) -> LuaResult<()> {
             let new_value = bool::from_lua(value, lua)?;
-            set_enabled(lua, this, !new_value)
+            if set_enabled(lua, this, !new_value)? {
+                ctx.set_changed();
+            }
+            Ok(())
         }]
+        #[changed_aliases=["Enabled"]]
         virtual disabled: bool,
         pub run_context: RunContext,
         priv started: bool

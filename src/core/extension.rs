@@ -13,6 +13,18 @@ pub enum EngineExtensionInitLevel {
     PostCore,
     Runtime,
 }
+
+impl std::fmt::Display for EngineExtensionInitLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EngineExtensionInitLevel::ExtLoader => f.write_str("ExtLoader"),
+            EngineExtensionInitLevel::EngineBuild => f.write_str("EngineBuild"),
+            EngineExtensionInitLevel::PostCore => f.write_str("PostCore"),
+            EngineExtensionInitLevel::Runtime => f.write_str("Runtime"),
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, Debug)]
 #[repr(u8)]
 pub enum EngineExtensionDistribution {
@@ -21,6 +33,17 @@ pub enum EngineExtensionDistribution {
     Server,
     Both,
 }
+
+impl std::fmt::Display for EngineExtensionDistribution {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EngineExtensionDistribution::Client => f.write_str("Client"),
+            EngineExtensionDistribution::Server => f.write_str("Server"),
+            EngineExtensionDistribution::Both => f.write_str("Both"),
+        }
+    }
+}
+
 impl EngineExtensionDistribution {
     pub fn client(self) -> bool {
         match self {

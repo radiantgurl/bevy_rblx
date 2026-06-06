@@ -1,8 +1,9 @@
 use std::mem::take;
+use std::time::{Duration, Instant};
 
 use crate::core::object::collection_service::CollectionService;
-use crate::core::object::{DisabledObject, RootInstance};
-use crate::core::{ContainerProvenance, push_log};
+use crate::core::object::{DisabledObject, ObjectContext, RootInstance};
+use crate::core::{ContainerProvenance, TaskScheduler, push_log};
 use crate::enums::MessageType;
 use crate::userdata::{LuaFreeValue, RBXScriptSignal};
 use crate::{
@@ -104,7 +105,7 @@ impl InstanceConstructor {
     }
 }
 
-pub fn remove_parent(lua: &Lua, this: Entity, new_parent: Option<Entity>) -> LuaResult<()> {
+fn remove_parent(lua: &Lua, this: Entity, new_parent: Option<Entity>) -> LuaResult<()> {
     let mut events: Vec<RBXScriptSignal> = Vec::new();
     {
         let mut wa = WorldAccess::fetch(lua);
@@ -152,7 +153,7 @@ pub fn remove_parent(lua: &Lua, this: Entity, new_parent: Option<Entity>) -> Lua
 
     Ok(())
 }
-pub fn add_parent(lua: &Lua, this: Entity, new_parent: Entity) -> LuaResult<()> {
+fn add_parent(lua: &Lua, this: Entity, new_parent: Entity) -> LuaResult<()> {
     let mut events: Vec<RBXScriptSignal> = Vec::new();
     {
         let mut wa = WorldAccess::fetch(lua);
@@ -198,7 +199,9 @@ impl Instance {
         }
         match vtable.lazy_full_fields.get("Parent").unwrap() {
             super::object::ObjectField::Property(object_property_info) => {
-                object_property_info.fire_changed_event(lua, this, vtable)?
+                let mut ctx = ObjectContext::new_property_setter(vtable, *object_property_info);
+                ctx.set_changed();
+                ctx.fire_changed(lua, this)?;
             }
             _ => unreachable!(),
         }
@@ -220,7 +223,6 @@ register_class! {
             }
         }
         Ok(())
-
     }]
     #[custom_getter=fn(lua: &Lua, this: Entity, field: &str) -> LuaResult<LuaValue> {
         let entity;
@@ -263,7 +265,7 @@ register_class! {
             let world = world_access.access_read_only();
             world.get::<Name>(this).expect("all instances have a name").as_str().into_lua(lua)
         }]
-        #[setter=fn(lua: &Lua, this: Entity, _vtable: &'static ObjectVTable, value: LuaValue) -> LuaResult<bool> {
+        #[setter=fn(lua: &Lua, this: Entity, ctx: &mut ObjectContext, value: LuaValue) -> LuaResult<()> {
             let mut world_access = WorldAccess::fetch(lua);
             let world = world_access.access_synchronized()?;
             let mut name = world.get_mut::<Name>(this).expect("all instances have a name");
@@ -271,8 +273,9 @@ register_class! {
             let diff = name.as_str() != &new_name;
             if diff {
                 name.set(new_name);
+                ctx.set_changed();
             }
-            Ok(diff)
+            Ok(())
         }]
         #[deprecated_alias="name"]
         virtual name: String,
@@ -290,20 +293,20 @@ register_class! {
             };
             ObjectRef::new(lua, e).into_lua(lua)
         }]
-        #[setter=fn(lua: &Lua, this: Entity, _vtable: &'static ObjectVTable, new_value: LuaValue) -> LuaResult<bool> {
+        #[setter=fn(lua: &Lua, this: Entity, ctx: &mut ObjectContext, new_value: LuaValue) -> LuaResult<()> {
             let obj_ref = Option::<ObjectRef>::from_lua(new_value, lua)?;
             {
                 let wa = WorldAccess::fetch_readonly(lua);
                 let world = wa.access_read_only();
                 if world.get::<ChildOf>(this).map(|c| c.0) == obj_ref.as_ref().map(|x| x.entity()) {
-                    return Ok(false); // no update
+                    return Ok(()); // no update
                 }
                 let members = InstanceMembers::fetch_members(&*world, this);
                 if members.parent_protected || members.destroyed {
                     drop(world);
                     drop(wa);
                     push_log(lua, MessageType::MessageWarning, format!("Failed to change instance Parent property, the property is locked."));
-                    return Ok(false); // no update
+                    return Ok(()); // no update
                 }
             }
 
@@ -312,7 +315,8 @@ register_class! {
             if let Some(new_parent) = obj_ref {
                 add_parent(lua, this, new_parent.entity())?;
             }
-            Ok(true)
+            ctx.set_changed();
+            Ok(())
         }]
         #[deprecated_alias="parent"]
         virtual parent: Option<ObjectRef>,
@@ -423,43 +427,28 @@ register_class! {
         }
         #[deprecated_alias="destroy"]
         fn destroy(lua: &Lua, this: ObjectRef) -> LuaResult<()> {
-            let (vtable, destroying) = {
-                let world_access = WorldAccess::fetch_readonly(lua);
-                let world = world_access.access_read_only();
-                let members = world.get::<InstanceMembers>(this.entity()).expect("is instance");
+            let destroying = {
+                let mut world_access = WorldAccess::fetch(lua);
+                let world = world_access.access_synchronized()?;
+                let mut members = world.get_mut::<InstanceMembers>(this.entity()).expect("is instance");
                 if members.destroy_protected {
-                    drop(world);
+                    drop(members);
                     drop(world_access);
                     push_log(lua, MessageType::MessageWarning, "object is not destroyable");
                     return Ok(());
                 }
                 if members.destroyed {
-                    drop(world);
+                    drop(members);
                     drop(world_access);
                     push_log(lua, MessageType::MessageWarning, "object already destroyed");
                     return Ok(())
                 }
-                let vtable = world.get::<ObjectHeader>(this.entity()).expect("is object").vtable;
-                let destroying = members.destroying.reference();
-                (vtable, destroying)
-            };
-
-            destroying.fire_in_lua(lua, true, ())?;
-            {
-                let mut world_access = WorldAccess::fetch(lua);
-                let world = world_access.access_synchronized()?;
-                let mut members = world.get_mut::<InstanceMembers>(this.entity()).unwrap();
-
-                members.parent_protected = false;
-            }
-            Instance::set_parent(lua, this.entity(), vtable, LuaValue::Nil)?;
-            {
-                let mut world_access = WorldAccess::fetch(lua);
-                let world = world_access.access_synchronized()?;
-                let mut members = world.get_mut::<InstanceMembers>(this.entity()).unwrap();
-                members.destroyed = true;
                 members.parent_protected = true;
-            }
+                members.destroyed = true;
+                members.destroying.reference()
+            };
+            destroying.fire_in_lua(lua, true, ())?;
+            Instance::force_set_parent(lua, this.entity(), None)?;
             Instance::clear_all_children(lua, (this, ))
         }
         fn find_first_ancestor(lua: &Lua, this: ObjectRef, name: String) -> LuaResult<Option<ObjectRef>> {
@@ -613,7 +602,7 @@ register_class! {
             let table = lua.create_table()?;
 
             for (k, v) in world.get::<InstanceMembers>(this.entity()).expect("this is an instance").attributes.iter() {
-                table.raw_set(k.as_str(), v)?;
+                table.raw_set(k.as_str(), v.clone())?;
             }
             table.into_lua(lua)
         }
@@ -777,6 +766,28 @@ register_class! {
                 ev.fire_in_lua(lua, false, new_value)?;
             }
             Ok(())
+        }
+        async fn wait_for_child(lua: Lua, this: ObjectRef, name: String, timeout: Option<f64>) -> LuaResult<Option<ObjectRef>> {
+            let instant = Instant::now();
+            let mut printed_warning = false;
+            loop {
+                println!("wait for child {}s", instant.elapsed().as_secs_f64());
+                TaskScheduler::fetch(&lua).defer_next_frame(&lua, lua.current_thread(), ())?;
+                println!("yielding");
+                lua.yield_with::<()>(()).await?;
+                println!("resuming");
+                if let Some(i) = Instance::find_first_child(&lua, (this.clone(), name.clone()))? {
+                    return Ok(Some(i));
+                }
+                if let Some(timeout_f64) = timeout && instant.elapsed().as_secs_f64() > timeout_f64 {
+                    return Ok(None);
+                } else if timeout.is_none() && instant.elapsed() > Duration::from_secs(10) && !printed_warning {
+                    printed_warning = true;
+                    let full_name = Instance::get_full_name(&lua, (this.clone(),))?;
+                    let stack_trace = lua.traceback(None, 2)?.to_string_lossy();
+                    push_log(&lua, MessageType::MessageWarning, format!("{full_name}:WaitForChild({name}) may be stuck on an infinite yield.\n{stack_trace}"));
+                }
+            }
         }
         fn debug_print_tree(lua: &Lua, this: ObjectRef) -> LuaResult<()> {
             let mut wa = WorldAccess::fetch(lua);

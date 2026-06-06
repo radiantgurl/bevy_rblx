@@ -548,10 +548,11 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
             }
         };
 
-        let getters_setters = args.members.fields.iter().filter(|x| x.r#priv.is_none()).map(|field| {
+        let getters_setters_defaults = args.members.fields.iter().filter(|x| x.r#priv.is_none()).map(|field| {
             let name = &field.name;
             let get_name = Ident::new(&format!("get_{name}"), name.span());
             let set_name = Ident::new(&format!("set_{name}"), name.span());
+            let default_name = Ident::new(&format!("default_{name}"), name.span());
             let getter = if let Some((lua_method_closure, block)) = field.getter.as_ref() {
                 let args = &lua_method_closure.args;
                 let async_kw = &lua_method_closure.async_token;
@@ -624,12 +625,29 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     let diff = *field != new_field;
                     if diff {
                         *field = new_field;
+                        ctx.set_changed();
                     }
-                    Ok(diff)
+                    Ok(())
                 };
                 quote_spanned! { get_name.span() =>
-                    pub fn #set_name(lua: &Lua, this: bevy_rblx::internal::Entity, _vtable: &'static bevy_rblx::internal::ObjectVTable, new_value: LuaValue) -> LuaResult<bool> {
+                    pub fn #set_name(lua: &Lua, this: bevy_rblx::internal::Entity, ctx: &mut bevy_rblx::internal::ObjectContext, new_value: LuaValue) -> LuaResult<()> {
                         #code_block
+                    }
+                }
+            } else {
+                quote! {}
+            };
+            let revert_to_default = if field.read_only.is_none() && !(field.setter.is_none() && field.r#virtual.is_some()) {
+                let ty = &field.ty;
+                let default = if let Some(d) = &field.default {
+                    quote! {#d}
+                } else {
+                    quote! {<#ty as Default>::default()}
+                };
+                quote_spanned! { field.name.span() =>
+                    pub fn #default_name(lua: &bevy_rblx::internal::Lua) -> bevy_rblx::internal::LuaResult<bevy_rblx::internal::LuaFreeValue> {
+                        use bevy_rblx::internal::{IntoLua, LuaFreeValue, FromLua};
+                        LuaFreeValue::from_lua(#default.into_lua(lua)?, lua)
                     }
                 }
             } else {
@@ -638,6 +656,7 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
             quote! {
                 #getter
                 #setter
+                #revert_to_default
             }
         }).filter(|x| !x.is_empty());
 
@@ -661,7 +680,7 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
         quote! {
             #impl_header
             {
-                #(#getters_setters)*
+                #(#getters_setters_defaults)*
             }
             #struct_spanned
             {
@@ -689,6 +708,7 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     .unwrap_or_else(|| Ident::new("NONE", name.span()));
                 let get_name = Ident::new(&format!("get_{name}"), name.span());
                 let set_name = Ident::new(&format!("set_{name}"), name.span());
+                let default_name = Ident::new(&format!("default_{name}"), name.span());
 
                 let setter = if field.read_only.is_some()
                     || (field.setter.is_none() && field.r#virtual.is_some())
@@ -699,18 +719,36 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
                         Some(#class_name::#set_name)
                     }
                 };
+
+                let mut deprecated_property_aliases = Vec::new();
+                deprecated_property_aliases.push(renamed.clone());
+                deprecated_property_aliases.append(&mut field.deprecated_aliases.clone());
+                let changed_aliases = &field.changed_aliases;
+                let mut deprecated_changed_aliases = field.changed_aliases.clone();
+                deprecated_changed_aliases.append(&mut field.deprecated_aliases.clone());
+
+                let default_property_fn = if field.read_only.is_none()
+                    && !(field.setter.is_none() && field.r#virtual.is_some())
+                {
+                    quote! {Some(#class_name::#default_name)}
+                } else {
+                    quote_spanned! {name.span() => None}
+                };
                 let final_quote = quote! {
                     bevy_rblx::internal::ObjectPropertyInfo {
                         property_name: #renamed,
                         security: bevy_rblx::internal::SecurityContext::#security_context,
-
-                        revert_to_default: None,
+                        default_value: #default_property_fn,
                         getter: #class_name::#get_name,
                         setter: #setter,
+                        #[cfg(not(feature="deprecated"))]
+                        property_aliases: &[#renamed],
+                        #[cfg(not(feature="deprecated"))]
+                        changed_aliases: &[#(#changed_aliases),*],
                         #[cfg(feature="deprecated")]
-                        deprecated_alias_of: None,
+                        property_aliases: &[#(#deprecated_property_aliases),*],
                         #[cfg(feature="deprecated")]
-                        deprecated_aliases: &[]
+                        changed_aliases: &[#(#deprecated_changed_aliases),*],
                     }
                 };
                 if field.deprecated_aliases.is_empty() {
@@ -726,9 +764,11 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
                                 property_name: #i,
                                 security: bevy_rblx::internal::SecurityContext::#security_context,
 
-                                revert_to_default: None,
+                                default_value: #default_property_fn,
                                 getter: #class_name::#get_name,
-                                setter: #setter
+                                setter: #setter,
+                                property_aliases: &[#(#deprecated_property_aliases),*],
+                                changed_aliases: &[#(#deprecated_changed_aliases),*],
                             },
                         }
                     }
@@ -759,9 +799,10 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
             } else {
                 quote! {}
             };
-            let is_a_check = quote! {
+            let is_a_check = quote_spanned! { name.span() =>
                 {
-                    let world_access = bevy_rblx::internal::WorldAccess::fetch_readonly(lua);
+                    use bevy_rblx::internal::LuaAsRef;
+                    let world_access = bevy_rblx::internal::WorldAccess::fetch_readonly(lua.as_lua_ref());
                     let world = world_access.access_read_only();
                     if !world.get::<bevy_rblx::internal::ObjectHeader>(#self_name.entity()).expect("entity is object").vtable.method_resolution_order.iter().any(|v| v.class_name == stringify!(#class_name)) {
                         return Err(bevy_rblx::internal::LuaError::runtime(concat!("object is not ", stringify!(#class_name))));
@@ -791,7 +832,7 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
     };
 
     let method_infos = {
-        args.methods.0.iter().map(|parse::Method { meta: parse::MethodMeta { rename, security, deprecated_aliases, .. }, sign: parse::LuaMethod { name, .. }, ..}| {
+        args.methods.0.iter().map(|parse::Method { meta: parse::MethodMeta { rename, security, deprecated_aliases, .. }, sign: parse::LuaMethod { name, async_token, .. }, ..}| {
             let actual_name = if rename.is_some() {
                 quote! {
                     #rename
@@ -803,16 +844,27 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 }
             };
             let security = security.as_ref().cloned().unwrap_or_else(|| Ident::new("NONE", name.span()));
-            let mut deprecated_quotes = quote!{};
 
+            let cached_fn_expr = if async_token.is_some() {
+                quote_spanned! { name.span()=>
+                    l.create_async_function(#class_name::#name)
+                }
+            } else {
+                quote_spanned! { name.span()=>
+                    l.create_function(#class_name::#name)
+                }
+            };
+
+            let mut deprecated_quotes = quote!{};
             for i in deprecated_aliases {
                 deprecated_quotes = quote!{
                     #deprecated_quotes
+                    #[cfg(feature="deprecated")]
                     bevy_rblx::internal::ObjectMethodInfo {
                         method_name: #i,
                         security: bevy_rblx::internal::SecurityContext::#security,
 
-                        function: bevy_rblx::internal::CachedLuaFunction::new(move |l: &Lua| l.create_function(#class_name::#name).expect("function creation shouldnt error"))
+                        function: bevy_rblx::internal::CachedLuaFunction::new(move |l: &Lua| #cached_fn_expr.expect("function creation shouldnt error"))
                     },
                 }
             }
@@ -822,7 +874,7 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
                     method_name: #actual_name,
                     security: bevy_rblx::internal::SecurityContext::#security,
 
-                    function: bevy_rblx::internal::CachedLuaFunction::new(move |l: &Lua| l.create_function(#class_name::#name).expect("function creation shouldnt error"))
+                    function: bevy_rblx::internal::CachedLuaFunction::new(move |l: &Lua| #cached_fn_expr.expect("function creation shouldnt error"))
                 }
             }
         })

@@ -136,39 +136,13 @@ impl IntoLua for LuaFreeValue {
     }
 }
 
-impl IntoLua for &LuaFreeValue {
-    fn into_lua(self, lua: &Lua) -> LuaResult<LuaValue> {
-        match self {
-            LuaFreeValue::Nil => Ok(LuaValue::Nil),
-            LuaFreeValue::Boolean(b) => Ok(LuaValue::Boolean(*b)),
-            LuaFreeValue::Integer(i) => Ok(LuaValue::Integer(*i)),
-            LuaFreeValue::Number(n) => Ok(LuaValue::Number(*n)),
-            LuaFreeValue::Vector(v) => Ok(LuaValue::Vector(LuaVector::new(v.x, v.y, v.z))),
-            LuaFreeValue::String(s) => s.as_str().into_lua(lua),
-            LuaFreeValue::Object(o) => o.clone_lua(lua).into_lua(lua),
-            LuaFreeValue::Buffer(items) => Ok(LuaValue::Buffer(lua.create_buffer(items)?)),
-            LuaFreeValue::CFrame(cframe) => (*cframe).into_lua(lua),
-            LuaFreeValue::Vector3(vector3) => (*vector3).into_lua(lua),
-            LuaFreeValue::Vector2(vector2) => (*vector2).into_lua(lua),
-            LuaFreeValue::EnumItem(origin, value) => {
-                let enums = LuaEnums.into_lua(lua)?;
-                let enums_ud = enums.as_userdata().unwrap();
-                enums_ud.get_path::<LuaValue>(format!("{origin}.{value}").as_str())
-            }
-            LuaFreeValue::Enum(origin) => {
-                let enums = LuaEnums.into_lua(lua)?;
-                let enums_ud = enums.as_userdata().unwrap();
-                enums_ud.get::<LuaValue>(origin.as_str())
-            }
-            LuaFreeValue::Enums => LuaEnums.into_lua(lua),
-            LuaFreeValue::Ray(ray) => ray.into_lua(lua),
-            LuaFreeValue::RaycastParams(lua_send_raycast_params) => {
-                lua_send_raycast_params.clone().into_lua(lua)
-            }
-            LuaFreeValue::RaycastResult(raycast_result) => {
-                raycast_result.clone_lua(lua).into_lua(lua)
-            }
-        }
+pub trait LuaValueExt: Sized {
+    fn into_free_value(self, lua: &Lua) -> LuaResult<LuaFreeValue>;
+}
+
+impl LuaValueExt for LuaValue {
+    fn into_free_value(self, lua: &Lua) -> LuaResult<LuaFreeValue> {
+        LuaFreeValue::from_lua(self, lua)
     }
 }
 

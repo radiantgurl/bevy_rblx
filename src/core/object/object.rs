@@ -1,17 +1,25 @@
-use std::{mem::take, sync::LazyLock};
+use std::{
+    mem::{ManuallyDrop, forget, take},
+    sync::LazyLock,
+};
 
 use crate::{
     core::{
         SecurityContext, ThreadIdentity, WorldAccess, bevy::RefCounted, lua::CachedLuaFunction,
     },
+    internal_prelude::*,
     userdata::{LuaFreeValue, ObjectRef, RBXScriptSignal},
 };
-use bevy::{platform::collections::HashMap, prelude::*};
+use bevy::{
+    platform::collections::{HashMap, HashSet},
+    prelude::*,
+};
 use lazy_static::lazy_static;
 use mlua::prelude::*;
 
-#[derive(Component, Clone, Debug)]
+#[derive(Component, Clone, Debug, Reflect)]
 #[require(RefCounted)]
+#[reflect(opaque)]
 pub struct ObjectHeader {
     pub vtable: &'static ObjectVTable,
     property_changed: HashMap<String, RBXScriptSignal>,
@@ -26,6 +34,11 @@ impl ObjectHeader {
             changed: RBXScriptSignal::default(),
         }
     }
+    pub fn get_property_changed(&self, name: &String) -> Option<RBXScriptSignal> {
+        self.property_changed
+            .get(name)
+            .map(RBXScriptSignal::reference)
+    }
 }
 
 #[derive(Debug)]
@@ -37,8 +50,8 @@ pub enum ObjectNewFn {
 
 pub type LuaObjectGetterFn = fn(&Lua, Entity, &'static ObjectVTable) -> LuaResult<LuaValue>;
 pub type LuaObjectFieldGetterFn = fn(&Lua, Entity, &str) -> LuaResult<LuaValue>;
-pub type LuaObjectSetterFn = fn(&Lua, Entity, &'static ObjectVTable, LuaValue) -> LuaResult<bool>;
-pub type LuaObjectPropertyRevertDefaultFn = fn(&Lua, Entity);
+pub type LuaObjectSetterFn = fn(&Lua, Entity, &mut ObjectContext, LuaValue) -> LuaResult<()>;
+pub type LuaObjectPropertyGetDefaultFn = fn(&Lua) -> LuaResult<LuaFreeValue>;
 pub type LuaObjectPostInitFn = fn(&Lua, Entity) -> LuaResult<()>;
 
 #[derive(Debug)]
@@ -48,14 +61,211 @@ pub struct ObjectPropertyInfo {
 
     pub getter: LuaObjectGetterFn,
     pub setter: Option<LuaObjectSetterFn>,
-    pub revert_to_default: Option<LuaObjectPropertyRevertDefaultFn>,
-    #[cfg(feature = "deprecated")]
-    pub deprecated_alias_of: Option<&'static str>,
-    #[cfg(feature = "deprecated")]
-    pub deprecated_aliases: &'static [&'static str],
+    pub default_value: Option<LuaObjectPropertyGetDefaultFn>,
+    /// Shared across property infos that share same getter/setter
+    pub property_aliases: &'static [&'static str],
+    /// Shared across property infos that share same underlying property
+    ///
+    /// Example (BasePart):
+    /// - For Position, it may have `["Position", "position"]` as the property_aliases, but `["CFrame", "Position"]` for changed_aliases
+    /// - For CFrame, it may have `["CFrame"]` as the property_aliases (there is no alias), but `["CFrame", "Position", "Rotation", "Orientation"]` for changed_aliases
+    pub changed_aliases: &'static [&'static str],
+}
+
+#[derive(Default, Debug)]
+struct ObjectContextDropError;
+impl Drop for ObjectContextDropError {
+    fn drop(&mut self) {
+        panic!("Cannot drop ObjectContext, it must be consumed");
+    }
+}
+
+#[must_use]
+#[derive(Debug)]
+pub struct ObjectContext {
+    property_changed: Option<(&'static ObjectPropertyInfo, bool)>,
+    other_modified_properties: HashSet<&'static str>,
+    vtable: &'static ObjectVTable,
+    manual_drop: ObjectContextDropError,
+}
+
+impl ObjectContext {
+    pub fn new(vtable: &'static ObjectVTable) -> Self {
+        Self {
+            property_changed: None,
+            other_modified_properties: HashSet::default(),
+            vtable,
+            manual_drop: ObjectContextDropError,
+        }
+    }
+    pub fn new_property_setter(
+        vtable: &'static ObjectVTable,
+        property_info: &'static ObjectPropertyInfo,
+    ) -> Self {
+        Self {
+            property_changed: Some((property_info, false)),
+            other_modified_properties: HashSet::default(),
+            vtable,
+            manual_drop: ObjectContextDropError,
+        }
+    }
+
+    pub fn vtable(&self) -> &'static ObjectVTable {
+        self.vtable
+    }
+    pub fn set_changed(&mut self) {
+        self.property_changed
+            .as_mut()
+            .expect("Not in a property setter context")
+            .1 = true;
+    }
+    pub fn set_changed_property(&mut self, property: &'static str) {
+        match property {
+            v if self
+                .property_changed
+                .is_some_and(|o| o.0.property_name == v) =>
+            {
+                self.property_changed.as_mut().unwrap().1 = true;
+            }
+            v => {
+                self.other_modified_properties.insert(v);
+            }
+        }
+    }
+    fn insert_value_and_events(
+        lua: &Lua,
+        entity: Entity,
+        vtable: &'static ObjectVTable,
+        values: &mut Vec<LuaFreeValue>,
+        property_refs: &mut HashMap<&'static str, usize>,
+        property_info: &'static ObjectPropertyInfo,
+    ) -> LuaResult<()> {
+        if property_refs.contains_key(property_info.property_name) {
+            return Ok(());
+        }
+        let value = (property_info.getter)(lua, entity, vtable)?.into_free_value(lua)?;
+        let idx = values.len();
+        values.push(value);
+        for prop_name in property_info.property_aliases {
+            property_refs.insert(*prop_name, idx);
+        }
+        for prop_name in property_info.changed_aliases {
+            if property_refs.contains_key(prop_name) {
+                continue;
+            }
+            let new_prop_info = match vtable.lazy_full_fields.get(prop_name).unwrap() {
+                ObjectField::Property(prop_info) => *prop_info,
+                _ => unreachable!(),
+            };
+            let value = (new_prop_info.getter)(lua, entity, vtable)?.into_free_value(lua)?;
+            let idx = values.len();
+            values.push(value);
+            for prop_name in new_prop_info.property_aliases {
+                property_refs.insert(*prop_name, idx);
+            }
+        }
+        Ok(())
+    }
+    pub fn fire_changed(self, lua: &Lua, entity: Entity) -> LuaResult<()> {
+        if !self.property_changed.is_some_and(|e| e.1) && self.other_modified_properties.is_empty()
+        {
+            return Ok(()); // skip if nothing is set
+        }
+        let ObjectContext {
+            property_changed,
+            other_modified_properties,
+            vtable,
+            manual_drop,
+        } = self;
+        forget(manual_drop);
+
+        let mut values = Vec::new();
+        let mut property_refs = HashMap::new();
+        let ancestry_fire;
+
+        let wa = WorldAccess::fetch_readonly(lua);
+        let world = wa.access_read_only();
+        let header = world.get::<ObjectHeader>(entity).unwrap();
+
+        let changed = header.changed.reference();
+        if let Some((prop_info, has_changed)) = property_changed
+            && has_changed
+        {
+            ancestry_fire = prop_info.property_name == "Parent";
+            // perform optimization for most properties
+            if prop_info.property_aliases.len() == 1
+                && prop_info.changed_aliases.len() == 0
+                && other_modified_properties.is_empty()
+            {
+                let v = header.get_property_changed(&prop_info.property_name.to_string());
+                drop(world);
+                drop(wa);
+                let value = (prop_info.getter)(lua, entity, vtable)?.into_free_value(lua)?;
+
+                changed.fire_in_lua(lua, ancestry_fire, prop_info.property_name)?;
+                if let Some(changed_property) = v {
+                    changed_property.fire_in_lua(lua, ancestry_fire, value)?;
+                }
+
+                return Ok(());
+            }
+
+            drop(world);
+            drop(wa);
+            Self::insert_value_and_events(
+                lua,
+                entity,
+                vtable,
+                &mut values,
+                &mut property_refs,
+                prop_info,
+            )?;
+        } else {
+            ancestry_fire = false;
+        }
+        for i in other_modified_properties {
+            let prop_info = match vtable.lazy_full_fields.get(i).unwrap() {
+                ObjectField::Property(p) => *p,
+                _ => unreachable!(),
+            };
+            Self::insert_value_and_events(
+                lua,
+                entity,
+                vtable,
+                &mut values,
+                &mut property_refs,
+                prop_info,
+            )?;
+        }
+
+        let wa = WorldAccess::fetch_readonly(lua);
+        let world = wa.access_read_only();
+        let header = world.get::<ObjectHeader>(entity).unwrap();
+
+        let prop_changes = property_refs
+            .keys()
+            .filter_map(|prop_name| {
+                header
+                    .get_property_changed(&prop_name.to_string())
+                    .map(|s| (*prop_name, s))
+            })
+            .collect::<HashMap<_, _>>();
+
+        drop(world);
+        drop(wa);
+
+        for i in property_refs.keys().copied() {
+            changed.fire_in_lua(lua, ancestry_fire, i)?;
+        }
+        for (prop_name, signal) in prop_changes {
+            signal.fire_in_lua(lua, ancestry_fire, values[property_refs[prop_name]].clone())?;
+        }
+        Ok(())
+    }
 }
 
 impl ObjectPropertyInfo {
+    #[deprecated = "use ObjectContext::fire_changed instead"]
     pub fn fire_changed_event(
         &'static self,
         lua: &Lua,
@@ -91,7 +301,7 @@ impl ObjectPropertyInfo {
         #[cfg(feature = "deprecated")]
         {
             let changed;
-            let mut property_changed_signal;
+            let property_changed_signal;
             {
                 let world_access = WorldAccess::fetch_readonly(lua);
                 let world = world_access.access_read_only();
@@ -186,9 +396,9 @@ impl ObjectField {
         match self {
             ObjectField::Property(object_property_info) => {
                 if let Some(setter) = object_property_info.setter {
-                    if setter(lua, object, vtable, value)? {
-                        object_property_info.fire_changed_event(lua, object, vtable)?;
-                    }
+                    let mut ctx = ObjectContext::new_property_setter(vtable, *object_property_info);
+                    setter(lua, object, &mut ctx, value)?;
+                    ctx.fire_changed(lua, object)?;
                     return Ok(());
                 }
             }
@@ -332,7 +542,12 @@ const _: () = {
                 security: SecurityContext::NONE,
                 getter: class_name_getter,
                 setter: None,
-                revert_to_default: None,
+                default_value: None,
+                #[cfg(not(feature = "deprecated"))]
+                property_aliases: &[],
+                #[cfg(feature = "deprecated")]
+                property_aliases: &["ClassName", "className"],
+                changed_aliases: &[],
             },
             #[cfg(feature = "deprecated")]
             ObjectPropertyInfo {
@@ -340,14 +555,21 @@ const _: () = {
                 security: SecurityContext::NONE,
                 getter: class_name_getter,
                 setter: None,
-                revert_to_default: None,
+                default_value: None,
+                #[cfg(not(feature = "deprecated"))]
+                property_aliases: &[],
+                #[cfg(feature = "deprecated")]
+                property_aliases: &["ClassName", "className"],
+                changed_aliases: &[],
             },
             ObjectPropertyInfo {
                 property_name: "Changed",
                 security: SecurityContext::NONE,
                 getter: changed_getter,
                 setter: None,
-                revert_to_default: None,
+                default_value: None,
+                property_aliases: &[],
+                changed_aliases: &[],
             },
         ],
         methods: &[
