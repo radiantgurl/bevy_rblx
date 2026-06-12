@@ -1,108 +1,57 @@
-use std::{ops::Deref, sync::Arc};
+use std::ops::Deref;
 
 use crate::{
-    core::{
-        WorldAccess,
-        bevy::{EntityCommandWrapper, ref_counted::commands::dec_ref_command},
-        lua::world_access::WorldAccessDestructor,
-        object::ObjectHeader,
-    },
+    core::{WorldAccess, bevy::RefCountedComponent, object::ObjectHeader},
     internal_prelude::*,
 };
-use bevy::{platform::collections::HashMap, prelude::*};
+use bevy::prelude::*;
 use mlua::prelude::*;
 
 use bevy::ecs::entity::Entity;
-use parking_lot::Mutex;
-#[derive(Reflect)]
-#[reflect(opaque)]
-pub struct ObjectRef(
-    Entity,
-    #[reflect(ignore)] WeakLua,
-    #[reflect(ignore)] Arc<Mutex<WorldAccessDestructor>>,
-);
-
-impl std::fmt::Debug for ObjectRef {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("ObjectRef").field(&self.0).finish()
-    }
+#[derive(Reflect, Debug)]
+pub struct ObjectRef {
+    e: Entity,
+    reference: RefCountedComponent,
 }
 impl PartialEq for ObjectRef {
     fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
+        self.e == other.e
     }
 }
 
 impl FromLua for ObjectRef {
-    fn from_lua(value: LuaValue, lua: &Lua) -> LuaResult<Self> {
+    fn from_lua(value: LuaValue, _lua: &Lua) -> LuaResult<Self> {
         let v: LuaUserDataRef<Self> = value.borrow_typed()?;
         unsafe {
-            let wa = WorldAccess::fetch_readonly(lua);
-            wa.access_commands().entity(v.0).inc_ref();
-            // wa.access_read_only().get::<RefCounted>(v.0).unwrap()
+            v.reference.inc();
         }
-        Ok(Self(
-            v.0,
-            lua.weak(),
-            lua.app_data_ref::<Arc<Mutex<WorldAccessDestructor>>>()
-                .unwrap()
-                .clone(),
-        ))
+        Ok(Self {
+            e: v.e,
+            reference: v.reference.reference(),
+        })
     }
 }
 
 impl ObjectRef {
     pub fn new(lua: &Lua, e: Entity) -> ObjectRef {
-        unsafe {
+        let reference = unsafe {
             let wa = WorldAccess::fetch_readonly(lua);
-            wa.access_commands().entity(e).inc_ref()
+            let world = wa.access_read_only();
+            let refcounted = world.get::<RefCountedComponent>(e).unwrap();
+            refcounted.inc();
+            refcounted.reference()
         };
-        ObjectRef(
-            e,
-            lua.weak(),
-            lua.app_data_ref::<Arc<Mutex<WorldAccessDestructor>>>()
-                .unwrap()
-                .clone(),
-        )
+        ObjectRef { e, reference }
     }
-    pub unsafe fn new_no_inc_ref(lua: &Lua, e: Entity) -> ObjectRef {
-        ObjectRef(
-            e,
-            lua.weak(),
-            lua.app_data_ref::<Arc<Mutex<WorldAccessDestructor>>>()
-                .unwrap()
-                .clone(),
-        )
+    pub fn new_world(world: &World, e: Entity) -> ObjectRef {
+        let reference = world.get::<RefCountedComponent>(e).unwrap().reference();
+        unsafe {
+            reference.inc();
+        }
+        ObjectRef { e, reference }
     }
     pub fn entity(&self) -> Entity {
-        self.0
-    }
-    pub fn clone_lua(&self, lua: &Lua) -> Self {
-        let wa = WorldAccess::fetch_readonly(lua);
-        let mut commands = wa.access_commands();
-
-        unsafe {
-            commands.entity(self.0).inc_ref();
-        }
-        Self {
-            0: self.0,
-            1: lua.weak(),
-            2: self.2.clone(),
-        }
-    }
-    pub unsafe fn clone_no_inc_ref(&self) -> Self {
-        Self {
-            0: self.0,
-            1: self.1.clone(),
-            2: self.2.clone(),
-        }
-    }
-    pub fn change_lua(mut self, lua: &Lua) -> Self {
-        self.1 = lua.weak();
-        self
-    }
-    pub fn change_lua_ref(&mut self, lua: &Lua) {
-        self.1 = lua.weak();
+        self.e
     }
 }
 
@@ -110,30 +59,14 @@ impl Deref for ObjectRef {
     type Target = Entity;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.e
     }
 }
 
 impl Drop for ObjectRef {
     fn drop(&mut self) {
-        if let Some(lua) = self.1.try_upgrade() {
-            unsafe {
-                WorldAccess::fetch_readonly(&lua)
-                    .access_commands()
-                    .entity(self.0)
-                    .dec_ref()
-            };
-        } else {
-            match &*self.2.lock() {
-                WorldAccessDestructor::None => unreachable!(
-                    "Luau container is being destroyed, but not by the world access collector. Failed to lock onto a valid world access destructor."
-                ),
-                WorldAccessDestructor::DestructPhase { commands } => {
-                    commands
-                        .lock()
-                        .push(EntityCommandWrapper::new(dec_ref_command, self.0));
-                }
-            }
+        unsafe {
+            self.reference.dec();
         }
     }
 }
@@ -144,9 +77,9 @@ impl LuaUserData for ObjectRef {
             let world_access = WorldAccess::fetch_readonly(l);
             let world = world_access.access_read_only();
             let string = world
-                .get::<Name>(t.0)
+                .get::<Name>(t.e)
                 .map(|x| x.as_str())
-                .unwrap_or_else(|| world.get::<ObjectHeader>(t.0).unwrap().vtable.class_name)
+                .unwrap_or_else(|| world.get::<ObjectHeader>(t.e).unwrap().vtable.class_name)
                 .to_owned();
             Ok(string)
         });
@@ -155,10 +88,10 @@ impl LuaUserData for ObjectRef {
             move |l, t, (k,): (String,)| -> LuaResult<LuaValue> {
                 let vtable = WorldAccess::fetch_readonly(l)
                     .access_read_only()
-                    .get::<ObjectHeader>(t.0)
+                    .get::<ObjectHeader>(t.e)
                     .unwrap()
                     .vtable;
-                vtable.get(l, t.0, k)
+                vtable.get(l, t.e, k)
             },
         );
         methods.add_meta_method(
@@ -166,15 +99,15 @@ impl LuaUserData for ObjectRef {
             move |l, t, (k, v): (String, LuaValue)| -> LuaResult<()> {
                 let vtable = WorldAccess::fetch_readonly(l)
                     .access_read_only()
-                    .get::<ObjectHeader>(t.0)
+                    .get::<ObjectHeader>(t.e)
                     .unwrap()
                     .vtable;
-                vtable.set(l, t.0, k, v)
+                vtable.set(l, t.e, k, v)
             },
         );
         methods.add_meta_method(
             "__eq",
-            move |_, t, (o,): (LuaUserDataRef<ObjectRef>,)| -> LuaResult<bool> { Ok(t.0 == o.0) },
+            move |_, t, (o,): (LuaUserDataRef<ObjectRef>,)| -> LuaResult<bool> { Ok(t.e == o.e) },
         )
     }
     fn add_fields<F: LuaUserDataFields<Self>>(fields: &mut F) {
@@ -184,34 +117,12 @@ impl LuaUserData for ObjectRef {
 
 impl Clone for ObjectRef {
     fn clone(&self) -> Self {
-        let lua = self.1.upgrade();
-        let world_access = WorldAccess::fetch_readonly(&lua);
-        let mut commands = world_access.access_commands();
-
         unsafe {
-            commands.entity(self.entity()).inc_ref();
+            self.reference.inc();
         }
-        Self(self.0.clone(), self.1.clone(), self.2.clone())
-    }
-}
-
-pub trait ObjectRefCollectionExt {
-    fn update_lua_origin(&mut self, lua: &Lua);
-}
-
-impl ObjectRefCollectionExt for [ObjectRef] {
-    fn update_lua_origin(&mut self, lua: &Lua) {
-        self.iter_mut().for_each(|v| v.change_lua_ref(lua))
-    }
-}
-impl ObjectRefCollectionExt for Vec<ObjectRef> {
-    fn update_lua_origin(&mut self, lua: &Lua) {
-        self.iter_mut().for_each(|v| v.change_lua_ref(lua))
-    }
-}
-
-impl<K: Sized> ObjectRefCollectionExt for HashMap<K, ObjectRef> {
-    fn update_lua_origin(&mut self, lua: &Lua) {
-        self.values_mut().for_each(|v| v.change_lua_ref(lua))
+        Self {
+            e: self.e,
+            reference: self.reference.reference(),
+        }
     }
 }

@@ -156,7 +156,7 @@ impl RaycastParams {
     }
 }
 
-#[derive(Clone, Reflect, Debug)]
+#[derive(Clone, Reflect, Debug, PartialEq)]
 pub struct LuaSendRaycastParams {
     pub exclude_instances: Option<Vec<ObjectRef>>,
     pub include_instances: Option<Vec<ObjectRef>>,
@@ -197,37 +197,31 @@ impl IntoLua for LuaSendRaycastParams {
             collision_group,
             respect_can_collide,
             brute_force_all_slow,
-            mut filter_descendants_instances,
+            filter_descendants_instances,
             filter_type,
         } = self;
         RaycastParams {
-            exclude_instances: if let Some(mut t) = exclude_instances {
-                t.update_lua_origin(lua);
-                Some(DynamicLuaVec::static_into_lua(t, lua)?)
-            } else {
-                None
-            },
-            include_instances: if let Some(mut t) = include_instances {
-                t.update_lua_origin(lua);
-                Some(DynamicLuaVec::static_into_lua(t, lua)?)
-            } else {
-                None
-            },
+            exclude_instances: exclude_instances
+                .map(|v| lua.create_sequence_from(v))
+                .transpose()?,
+            include_instances: include_instances
+                .map(|v| lua.create_sequence_from(v))
+                .transpose()?,
             ignore_water,
             collision_group,
             respect_can_collide,
             brute_force_all_slow,
-            filter_descendants_instances: {
-                filter_descendants_instances.update_lua_origin(lua);
-                DynamicLuaVec::static_into_lua(filter_descendants_instances, lua)?
-            },
+            filter_descendants_instances: DynamicLuaVec::static_into_lua(
+                filter_descendants_instances,
+                lua,
+            )?,
             filter_type,
         }
         .into_lua(lua)
     }
 }
 
-#[derive(Clone, Reflect, Debug, FromLua)]
+#[derive(Clone, Reflect, Debug, FromLua, PartialEq)]
 pub struct RaycastResult {
     pub distance: f64,
     pub instance: ObjectRef,
@@ -239,7 +233,7 @@ pub struct RaycastResult {
 impl LuaUserData for RaycastResult {
     fn add_fields<F: LuaUserDataFields<Self>>(fields: &mut F) {
         fields.add_field_method_get("Distance", |_, t| Ok(t.distance));
-        fields.add_field_method_get("Instance", |lua, t| Ok(t.instance.clone_lua(lua)));
+        fields.add_field_method_get("Instance", |_, t| Ok(t.instance.clone()));
         fields.add_field_method_get("Material", |_, t| Ok(t.material));
         fields.add_field_method_get("Position", |_, t| Ok(Into::<Vector3>::into(t.position)));
         fields.add_field_method_get("Normal", |_, t| Ok(Into::<Vector3>::into(t.normal)));
@@ -247,10 +241,10 @@ impl LuaUserData for RaycastResult {
 }
 
 impl RaycastResult {
-    pub fn clone_lua(&self, lua: &Lua) -> Self {
+    pub fn clone_lua(&self, _: &Lua) -> Self {
         Self {
             distance: self.distance,
-            instance: self.instance.clone_lua(lua),
+            instance: self.instance.clone(),
             material: self.material,
             position: self.position,
             normal: self.normal,

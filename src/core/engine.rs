@@ -47,9 +47,9 @@ use crate::{
         },
         fastflags::FastFlagValue,
         lua::{
-            FFTaskSchedulerTimeSensitive, clock,
+            FFTaskSchedulerV2, clock,
             luau::{assign_provenance, create_provenance, erase_provenance},
-            world_access::{WorldAccessDestructor, WorldAccessDesyncGuard},
+            world_access::WorldAccessDesyncGuard,
         },
         object::{
             DisabledObject, NewInstanceEvent, RunServiceMembers,
@@ -212,14 +212,6 @@ fn cleanup_instances(w: &mut World) {
     let arc_queue = Arc::new(Mutex::new(CommandQueue::default()));
 
     for lua in containers {
-        unsafe {
-            WorldAccess::fetch(&lua).insert_desync_custom_access(arc_w.clone(), arc_queue.clone());
-        }
-        *lua.app_data_ref::<Arc<Mutex<WorldAccessDestructor>>>()
-            .unwrap()
-            .lock() = WorldAccessDestructor::DestructPhase {
-            commands: arc_queue.clone(),
-        };
         lua.gc_restart();
         lua.set_globals(lua.create_table().unwrap()).unwrap();
         drop(lua);
@@ -818,7 +810,7 @@ impl Engine {
         }
         {
             FAST_FLAGS.store::<FFSignalBehavior>(prev);
-            FAST_FLAGS.store::<FFTaskSchedulerTimeSensitive>(true);
+            FAST_FLAGS.store::<FFTaskSchedulerV2>(true);
             let timer = Instant::now();
             let mut waiting = containers_qs
                 .iter(w)

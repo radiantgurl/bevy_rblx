@@ -9,7 +9,6 @@ use bevy::ecs::world::CommandQueue;
 use bevy::prelude::*;
 use bevy_rblx_derive::register;
 use mlua::{AppDataRef, AppDataRefMut, prelude::*};
-use parking_lot::{Mutex, MutexGuard};
 
 #[derive(Default)]
 enum InternalWorldAccess {
@@ -22,10 +21,6 @@ enum InternalWorldAccess {
         commands: RefCell<CommandQueue>,
         read_only_world: Arc<World>,
     },
-    DesynchronizedWithQueue {
-        commands: Arc<Mutex<CommandQueue>>,
-        read_only_world: Arc<World>,
-    },
 }
 impl std::fmt::Debug for InternalWorldAccess {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -33,7 +28,6 @@ impl std::fmt::Debug for InternalWorldAccess {
             Self::None => write!(f, "None"),
             Self::Synchronized { .. } => write!(f, "Synchronized"),
             Self::Desynchronized { .. } => write!(f, "Desynchronized"),
-            Self::DesynchronizedWithQueue { .. } => write!(f, "DesynchronizedWithQueue"),
         }
     }
 }
@@ -50,10 +44,10 @@ impl LuaSingleton for WorldAccess {
 }
 enum InternalWorldAccessCommands<'a> {
     Synchronized(UnsafeCell<RefMut<'a, World>>, Commands<'a, 'a>),
-    #[allow(dead_code)]
-    Desynchronized(UnsafeCell<RefMut<'a, CommandQueue>>, Commands<'a, 'a>),
-    #[allow(dead_code)]
-    DesynchronizedWithQueue(UnsafeCell<MutexGuard<'a, CommandQueue>>, Commands<'a, 'a>),
+    Desynchronized(
+        #[expect(dead_code)] UnsafeCell<RefMut<'a, CommandQueue>>,
+        Commands<'a, 'a>,
+    ),
 }
 
 #[repr(transparent)]
@@ -126,6 +120,7 @@ impl<'a> Drop for WorldAccessDesyncGuard<'a> {
             Arc::try_unwrap(self.arc_world.take().unwrap())
                 .expect("arc world was not released by all lua instances"),
         );
+        q.apply(self.real_world);
         *self.placeholder_world = Some(placeholder);
     }
 }
@@ -189,33 +184,18 @@ impl WorldAccess {
             read_only_world: w,
         }
     }
-    /// Used internally before the lua ceases to exist
-    pub(in crate::core) unsafe fn insert_desync_custom_access(
-        &mut self,
-        w: Arc<World>,
-        q: Arc<Mutex<CommandQueue>>,
-    ) {
-        self.0 = InternalWorldAccess::DesynchronizedWithQueue {
-            commands: q,
-            read_only_world: w,
-        }
-    }
     fn clear_desync_access(&mut self) -> CommandQueue {
         match replace(&mut self.0, InternalWorldAccess::None) {
-            InternalWorldAccess::None => {
-                panic!("Internal error: no world access while trying to clear it")
-            }
+            InternalWorldAccess::None => unreachable!("no world access while trying to clear it"),
             InternalWorldAccess::Desynchronized { mut commands, .. } => take(commands.get_mut()),
-            _ => panic!("Internal error: invalid world access"),
+            _ => unreachable!("invalid world access"),
         }
     }
     fn clear_sync_access(&mut self) -> World {
         match replace(&mut self.0, InternalWorldAccess::None) {
-            InternalWorldAccess::None => {
-                panic!("Internal error: no world access while trying to clear it")
-            }
+            InternalWorldAccess::None => unreachable!("no world access while trying to clear it"),
             InternalWorldAccess::Synchronized { world, .. } => world.into_inner(),
-            _ => panic!("Internal error: invalid world access"),
+            _ => unreachable!("invalid world access"),
         }
     }
     #[must_use = "world access is automatically dropped once the guard gets dropped. to control this behavior you may drop it manually."]
@@ -255,21 +235,16 @@ impl WorldAccess {
     }
     pub fn access_synchronized<'a>(&'a mut self) -> LuaResult<&'a mut World> {
         match &mut self.0 {
-            InternalWorldAccess::None => {
-                unreachable!("Failed to access world instance, this should never happen.")
-            }
+            InternalWorldAccess::None => unreachable!("invalid world access"),
             InternalWorldAccess::Synchronized { world, .. } => Ok(world.get_mut()),
-            InternalWorldAccess::Desynchronized { .. }
-            | InternalWorldAccess::DesynchronizedWithQueue { .. } => Err(LuaError::runtime(
-                "cannot access underlying world in desynchronized phase",
+            InternalWorldAccess::Desynchronized { .. } => Err(LuaError::runtime(
+                "call is not allowed from a desynchronized context",
             )),
         }
     }
     pub fn access_commands<'a>(&'a self) -> WorldAccessCommands<'a> {
         match &self.0 {
-            InternalWorldAccess::None => {
-                unreachable!("Failed to access world instance, this should never happen.")
-            }
+            InternalWorldAccess::None => unreachable!("invalid world access"),
             InternalWorldAccess::Synchronized { world } => {
                 let world_ref = UnsafeCell::new(world.borrow_mut());
 
@@ -294,35 +269,15 @@ impl WorldAccess {
                     mut_ref, commands,
                 ))
             }
-            InternalWorldAccess::DesynchronizedWithQueue {
-                commands,
-                read_only_world,
-            } => {
-                let mut_ref = UnsafeCell::new(commands.lock());
-                let commands = unsafe {
-                    let queue = &mut **mut_ref.get();
-
-                    Commands::new(queue, &**read_only_world)
-                };
-
-                WorldAccessCommands(InternalWorldAccessCommands::DesynchronizedWithQueue(
-                    mut_ref, commands,
-                ))
-            }
         }
     }
     pub fn access_read_only<'a>(&'a self) -> WorldReadOnlyAccess<'a> {
         match &self.0 {
-            InternalWorldAccess::None => {
-                unreachable!("Failed to access world instance, this should never happen.")
-            }
+            InternalWorldAccess::None => unreachable!("invalid world access"),
             InternalWorldAccess::Synchronized { world, .. } => {
                 WorldReadOnlyAccess(InternalWorldReadOnlyAccess::Synchronized(world.borrow()))
             }
             InternalWorldAccess::Desynchronized {
-                read_only_world, ..
-            }
-            | InternalWorldAccess::DesynchronizedWithQueue {
                 read_only_world, ..
             } => WorldReadOnlyAccess(InternalWorldReadOnlyAccess::Desynchronized(
                 read_only_world.clone(),
@@ -332,9 +287,7 @@ impl WorldAccess {
 
     pub fn access_world_commands<'a>(&'a mut self) -> (&'a World, Commands<'a, 'a>) {
         match &mut self.0 {
-            InternalWorldAccess::None => {
-                unreachable!("Failed to access world instance, this should never happen.")
-            }
+            InternalWorldAccess::None => unreachable!("invalid world access"),
             InternalWorldAccess::Synchronized { world, .. } => {
                 let world_ref = world.get_mut();
                 let world_ptr = &raw const *world_ref;
@@ -348,34 +301,29 @@ impl WorldAccess {
                 let queue = commands.get_mut();
                 (&**read_only_world, Commands::new(queue, read_only_world))
             }
-            InternalWorldAccess::DesynchronizedWithQueue { .. } => todo!(),
         }
     }
 
     pub fn is_desynchronized(&self) -> bool {
         match &self.0 {
             InternalWorldAccess::None | InternalWorldAccess::Synchronized { .. } => false,
-            InternalWorldAccess::Desynchronized { .. }
-            | InternalWorldAccess::DesynchronizedWithQueue { .. } => true,
+            InternalWorldAccess::Desynchronized { .. } => true,
         }
     }
 
     pub fn assert_synchronized(&mut self) -> LuaResult<()> {
         match &mut self.0 {
-            InternalWorldAccess::None => {
-                unreachable!("Failed to access world instance, this should never happen.")
-            }
+            InternalWorldAccess::None => unreachable!("invalid world access"),
             InternalWorldAccess::Synchronized { .. } => Ok(()),
-            InternalWorldAccess::Desynchronized { .. }
-            | InternalWorldAccess::DesynchronizedWithQueue { .. } => Err(LuaError::runtime(
-                "cannot access underlying world in desynchronized phase",
+            InternalWorldAccess::Desynchronized { .. } => Err(LuaError::runtime(
+                "call is not allowed from a desynchronized context",
             )),
         }
     }
     #[cfg(debug_assertions)]
     pub fn assert_valid(&self) {
         match &self.0 {
-            InternalWorldAccess::None => panic!("Internal error: expected valid world access"),
+            InternalWorldAccess::None => unreachable!("invalid world access"),
             _ => (),
         }
     }
@@ -390,8 +338,7 @@ impl<'a> Deref for WorldAccessCommands<'a> {
     fn deref(&self) -> &Self::Target {
         match &self.0 {
             InternalWorldAccessCommands::Synchronized(_, commands)
-            | InternalWorldAccessCommands::Desynchronized(_, commands)
-            | InternalWorldAccessCommands::DesynchronizedWithQueue(_, commands) => commands,
+            | InternalWorldAccessCommands::Desynchronized(_, commands) => commands,
         }
     }
 }
@@ -400,8 +347,7 @@ impl<'a> DerefMut for WorldAccessCommands<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match &mut self.0 {
             InternalWorldAccessCommands::Synchronized(_, commands)
-            | InternalWorldAccessCommands::Desynchronized(_, commands)
-            | InternalWorldAccessCommands::DesynchronizedWithQueue(_, commands) => commands,
+            | InternalWorldAccessCommands::Desynchronized(_, commands) => commands,
         }
     }
 }
@@ -413,20 +359,6 @@ impl<'a> Drop for WorldAccessCommands<'a> {
                 ref_mut.get_mut().flush();
             }
             InternalWorldAccessCommands::Desynchronized(_, _) => (),
-            InternalWorldAccessCommands::DesynchronizedWithQueue(_, _) => (),
         }
-    }
-}
-
-pub(crate) enum WorldAccessDestructor {
-    None,
-    DestructPhase { commands: Arc<Mutex<CommandQueue>> },
-}
-
-#[register]
-impl LuaSingleton for WorldAccessDestructor {
-    fn register_singleton(lua: &Lua) -> LuaResult<()> {
-        lua.set_app_data(Arc::new(Mutex::new(WorldAccessDestructor::None)));
-        Ok(())
     }
 }

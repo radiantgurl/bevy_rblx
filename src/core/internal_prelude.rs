@@ -35,7 +35,7 @@ mod sealed {
             }
         }
     }
-
+    #[allow(dead_code)]
     pub(crate) trait AnyUserDataTypedExt<T: 'static> {
         fn borrow_typed(&self) -> LuaResult<LuaUserDataRef<T>>;
         fn borrow_typed_mut(&self) -> LuaResult<LuaUserDataRefMut<T>>;
@@ -188,7 +188,6 @@ mod sealed {
 }
 
 pub(crate) use crate::userdata::LuaValueExt;
-pub(crate) use crate::userdata::ObjectRefCollectionExt;
 pub(crate) use sealed::AnyUserDataTypedExt as _;
 pub use sealed::IntoLuaThread;
 pub(crate) use sealed::LuaExt as _;

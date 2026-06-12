@@ -6,8 +6,10 @@ mod object;
 mod ray;
 mod rbx_script_signal;
 mod r#typeof;
+mod udim;
 mod vector2;
 mod vector3;
+mod vectorint16;
 
 pub use cframe::CFrame;
 pub use color3::Color3;
@@ -19,8 +21,8 @@ pub use rbx_script_signal::{
 };
 pub use vector2::Vector2;
 pub use vector3::Vector3;
+pub use vectorint16::{Vector2int16, Vector3int16};
 
 pub use lua_free_value::LuaValueExt;
-pub(crate) use object::ObjectRefCollectionExt;
 
-pub use instance::instance_new;
+pub use instance::{instance_new, instance_protected_new};

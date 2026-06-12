@@ -18,25 +18,35 @@ use bevy::{
 use bevy_egui::{
     EguiContexts, EguiPrimaryContextPass,
     egui::{
-        self, Color32, FontId, ScrollArea, TextEdit, TextFormat, Window,
+        self, Color32, FontId, Response, ScrollArea, TextEdit, TextFormat, Window,
         text::{CCursor, CCursorRange, LayoutJob},
         text_edit::TextEditState,
     },
 };
-use bevy_rblx_derive::register;
+use bevy_rblx_derive::{cached_lua_function, register};
 use chrono::DateTime;
 use mlua::prelude::*;
 
-async fn interpreter_execute(
-    lua: Lua,
+#[cached_lua_function]
+fn interpreter_execute(
+    lua: &Lua,
     (e, table, chunk_name): (String, LuaTable, String),
 ) -> LuaResult<()> {
-    let res = lua
-        .load(e)
+    let func = if let Ok(f) = lua
+        .load(format!("return {e}"))
         .set_environment(table.clone())
-        .set_name(chunk_name)
-        .eval_async::<LuaMultiValue>()
-        .await;
+        .set_name(chunk_name.as_str())
+        .into_function()
+    {
+        Ok(f)
+    } else {
+        lua.load(e)
+            .set_environment(table.clone())
+            .set_name(chunk_name.as_str())
+            .into_function()
+    }?;
+    let res = func.call::<LuaMultiValue>(());
+
     match res {
         Ok(v) => {
             if !v.is_empty() {
@@ -86,7 +96,7 @@ pub async fn interpreter(lua: Lua, (): ()) -> LuaResult<()> {
             file.read_to_string(&mut data).into_lua_err()?;
             TaskScheduler::fetch(&lua).defer_custom_pd(
                 &lua,
-                lua.create_async_function(interpreter_execute)?,
+                lua.create_function(interpreter_execute)?,
                 (data, env_copy.clone(), format!("@{filename}")),
                 false,
             )?;
@@ -103,7 +113,7 @@ pub async fn interpreter(lua: Lua, (): ()) -> LuaResult<()> {
 
         TaskScheduler::fetch(&lua).defer_custom_pd(
             &lua,
-            lua.create_async_function(interpreter_execute)?,
+            INTERPRETER_EXECUTE.fetch(&lua),
             (e, env.clone(), "=interpreter"),
             false,
         )?;
@@ -133,6 +143,34 @@ pub fn start_input_handler(mut commands: Commands) {
     })
 }
 
+fn verify_cursor_pos(single_line: Response) {
+    single_line.ctx.data_mut(move |d| {
+        if let Some(mut state) = d.get_persisted::<TextEditState>(single_line.id) {
+            if let Some(r) = state.cursor.char_range()
+                && (r.contains(CCursorRange::one(CCursor::new(0)))
+                    || r.contains(CCursorRange::one(CCursor::new(1))))
+            {
+                let mut cc = r.sorted_cursors();
+                cc[0].index = 2;
+                state
+                    .cursor
+                    .set_char_range(Some(CCursorRange::two(cc[0], cc[1])));
+                d.insert_persisted(single_line.id, state);
+            }
+        }
+    });
+}
+fn set_cursor_pos(single_line: Response, pos: usize) {
+    single_line.ctx.data_mut(move |d| {
+        if let Some(mut state) = d.get_persisted::<TextEditState>(single_line.id) {
+            state
+                .cursor
+                .set_char_range(Some(CCursorRange::one(CCursor::new(pos))));
+            d.insert_persisted(single_line.id, state);
+        }
+    });
+}
+
 #[derive(Resource)]
 struct InterpreterThread(LuaThread);
 fn ui_commandline(
@@ -141,6 +179,10 @@ fn ui_commandline(
     mut code_input: Local<String>,
     thread: Res<InterpreterThread>,
     mut commands: Commands,
+
+    mut history: Local<Vec<String>>,
+    mut history_cur_index: Local<Option<usize>>,
+    mut history_last_temp: Local<Option<String>>,
 
     old_logs: Res<RblxLogs>,
     mut new_logs: MessageReader<LoggedMessage>,
@@ -258,30 +300,20 @@ fn ui_commandline(
                     })
                 });
             let single_line = ui.add_sized(egui::vec2(max_x, FontId::default().size), {
-                TextEdit::singleline(&mut *code_input).code_editor()
+                TextEdit::singleline(&mut *code_input).code_editor().lock_focus(true)
             });
             if code_input.len() < 2 {
                 *code_input = "> ".into();
             }
 
-            ui.ctx().data_mut(|d| {
-                if let Some(mut state) = d.get_persisted::<TextEditState>(single_line.id) {
-                    if let Some(r) = state.cursor.char_range()
-                        && (r.contains(CCursorRange::one(CCursor::new(0)))
-                            || r.contains(CCursorRange::one(CCursor::new(1))))
-                    {
-                        let mut cc = r.sorted_cursors();
-                        cc[0].index = 2;
-                        state
-                            .cursor
-                            .set_char_range(Some(CCursorRange::two(cc[0], cc[1])));
-                        d.insert_persisted(single_line.id, state);
-                    }
-                }
-            });
+            verify_cursor_pos(single_line.clone());
             if single_line.lost_focus()
                 && single_line.ctx.input(|i| i.key_pressed(egui::Key::Enter))
             {
+                history.push(code_input.to_string());
+                *history_cur_index = None;
+                *history_last_temp = None;
+
                 let code = code_input[2..].to_string();
                 if thread.0.resume::<()>(code.clone()).is_err() {
                     bevy::log::warn!(target:"bevy_rblx::devconsole", "Interpreter thread seems to have died. Creating new environment.");
@@ -317,6 +349,32 @@ fn ui_commandline(
             }
             if single_line.ctx.input(|i| i.key_pressed(egui::Key::F9)) {
                 single_line.request_focus();
+            }
+            if single_line.has_focus() &&
+                single_line.ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) &&
+                history.len() != 0 &&
+                (history_cur_index.is_none() || history_cur_index.is_some_and(|v| v != 0))
+            {
+                // history up
+                if history_cur_index.is_none() {
+                    *history_last_temp = Some(code_input.clone());
+                    *history_cur_index = Some(history.len() - 1);
+                } else {
+                    *history_cur_index.as_mut().unwrap() -= 1;
+                }
+                *code_input = history[history_cur_index.unwrap()].clone();
+                set_cursor_pos(single_line.clone(), code_input.len());
+            }
+            if single_line.has_focus() && single_line.ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) && history_cur_index.is_some() {
+                // history down
+                if history_cur_index.unwrap()+1 == history.len() {
+                    *history_cur_index = None;
+                    *code_input = history_last_temp.take().unwrap();
+                } else {
+                    *history_cur_index.as_mut().unwrap() += 1;
+                    *code_input = history[history_cur_index.unwrap()].clone();
+                }
+                set_cursor_pos(single_line.clone(), code_input.len());
             }
         });
     Ok(())

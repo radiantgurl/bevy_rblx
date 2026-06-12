@@ -3,10 +3,7 @@ use bevy::{
     platform::collections::{HashMap, HashSet},
 };
 
-use crate::{
-    core::{bevy::RefCounted, object::service::DisablingService},
-    internal_prelude::*,
-};
+use crate::{core::object::service::DisablingService, internal_prelude::*};
 use bevy_rblx_derive::register_class;
 use mlua::prelude::*;
 
@@ -34,7 +31,7 @@ fn on_destroy(lua: &Lua, (this, instance): (ObjectRef, ObjectRef)) -> LuaResult<
     };
     let remove_tag = lua.create_function(CollectionService::remove_tag)?;
     for tag in tags.into_iter() {
-        remove_tag.queue_call(lua, (this.clone_lua(lua), instance.clone_lua(lua), tag))?;
+        remove_tag.queue_call(lua, (this.clone(), instance.clone(), tag))?;
     }
     Ok(())
 }
@@ -80,11 +77,7 @@ register_class! {
                     }
                 };
                 let instance_destroying = world.get_mut::<InstanceMembers>(instance.entity()).expect("is instance").destroying.reference();
-                let new_instance = unsafe {
-                    let instance_cloned = instance.clone_no_inc_ref();
-                    world.get_mut::<RefCounted>(instance_cloned.entity()).expect("instances are ref counted").inc();
-                    instance_cloned
-                };
+                let new_instance = instance.clone();
                 let mut mut_ref = world.get_mut::<CollectionServiceMembers>(this.entity()).expect("is collection service");
                 mut_ref.destroying_conns.entry(instance.entity()).or_insert_with(|| {
                     let func = lua.create_function(on_destroy).unwrap().bind((this.into_lua(lua).unwrap(), new_instance.into_lua(lua).unwrap())).unwrap();

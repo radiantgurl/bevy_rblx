@@ -15,7 +15,7 @@ impl EngineExtension for RenderingExtension {
     }
 
     fn init_level(&self) -> EngineExtensionInitLevel {
-        EngineExtensionInitLevel::PostCore
+        EngineExtensionInitLevel::EngineBuild
     }
 
     fn distribution(&self) -> EngineExtensionDistribution {
@@ -34,7 +34,7 @@ impl EngineExtension for RenderingExtension {
         Some("Rendering integration with Bevy Game Engine")
     }
 
-    fn post_core_init(&self, world: &mut World) {}
+    fn engine_build(&mut self, app: &mut App) {}
 
     fn post_shutdown_hook(&self, world: &mut World) {}
 }

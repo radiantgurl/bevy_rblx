@@ -219,7 +219,7 @@ fn enable_basescript(lua: &Lua, this: ObjectRef) -> LuaResult<()> {
         .source
         .clone();
     drop(wa);
-    let path = Instance::get_full_name(lua, (this.clone_lua(lua),))?;
+    let path = Instance::get_full_name(lua, (this.clone(),))?;
     let f = create_lua_function(lua, source, path, this.entity())?;
     TaskScheduler::fetch(lua).defer_next_frame(lua, f, ())?;
     Ok(())
@@ -292,7 +292,7 @@ fn set_enabled(lua: &Lua, this: Entity, new_value: bool) -> LuaResult<bool> {
 register_class! {
     #[post_init=fn(lua:&Lua, _this: Entity) -> LuaResult<()> {
         if !WorldAccess::fetch_readonly(lua).access_read_only().contains_resource::<ScriptingLoaded>() {
-            Err(LuaError::runtime("Scripting module is not loaded."))
+            Err(LuaError::runtime("scripting module is not loaded."))
         } else {
             Ok(())
         }
@@ -365,7 +365,7 @@ fn script_enable_disable(
                     .defer_next_frame_custom_pd(
                         &lua,
                         ENABLE_BASESCRIPT.fetch(&lua),
-                        unsafe { ObjectRef::new_no_inc_ref(&lua, e) },
+                        ObjectRef::new_world(w, e),
                         false,
                     )
                     .unwrap();
@@ -385,7 +385,7 @@ fn script_enable_disable(
                     .defer_next_frame_custom_pd(
                         &lua,
                         DISABLE_BASESCRIPT.fetch(&lua),
-                        unsafe { ObjectRef::new_no_inc_ref(&lua, e) },
+                        ObjectRef::new_world(w, e),
                         false,
                     )
                     .unwrap();

@@ -5,6 +5,7 @@ use crate::{
     internal_prelude::*,
 };
 use bevy::{platform::collections::HashSet, prelude::*};
+use parking_lot::Mutex;
 use std::{
     iter::once,
     sync::{
@@ -16,7 +17,7 @@ use std::{
     },
 };
 
-#[derive(Default, Reflect)]
+#[derive(Default, Reflect, Debug)]
 pub struct RefCountedGroup {
     inner: Arc<AtomicU32>,
     held: u32,
@@ -58,13 +59,22 @@ impl Drop for RefCountedGroup {
     }
 }
 
-#[derive(Component, Default, Reflect)]
-pub struct RefCounted {
+#[derive(Reflect, Default, Debug)]
+struct RefCounted {
     count: u32,
     group: Option<RefCountedGroup>,
     protected: bool,
 }
 
+#[derive(Default, Component, Debug, Reflect)]
+#[reflect(opaque)]
+pub struct RefCountedComponent(Arc<Mutex<RefCounted>>);
+
+impl Clone for RefCountedComponent {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
 impl Clone for RefCounted {
     fn clone(&self) -> Self {
         Self::default()
@@ -88,7 +98,7 @@ impl RefCounted {
         }
         r
     }
-    pub fn should_delete_mut(&mut self) -> bool {
+    pub fn should_delete(&self) -> bool {
         if self.group.is_some() {
             self.group.as_ref().unwrap().inner.load(Ordering::Acquire) == 0
         } else {
@@ -103,22 +113,15 @@ impl RefCounted {
             self.count
         }
     }
-    pub fn fetch_count_mut(&mut self) -> u32 {
-        if self.group.is_some() {
-            self.group.as_ref().unwrap().inner.load(Ordering::Acquire)
-        } else {
-            self.count
-        }
-    }
 
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             count: 0,
             group: None,
             protected: false,
         }
     }
-    pub fn new_protected() -> Self {
+    pub const fn new_protected() -> Self {
         Self {
             count: 1,
             group: None,
@@ -137,7 +140,7 @@ impl RefCounted {
             self.protected = false;
         }
     }
-    pub fn get_group(&self) -> Option<&RefCountedGroup> {
+    pub const fn get_group(&self) -> Option<&RefCountedGroup> {
         self.group.as_ref()
     }
     pub unsafe fn set_group(&mut self, group: Option<RefCountedGroup>) {
@@ -149,6 +152,59 @@ impl RefCounted {
     }
 }
 
+impl RefCountedComponent {
+    #[inline(always)]
+    pub unsafe fn inc(&self) -> u32 {
+        unsafe { self.0.lock().inc() }
+    }
+    #[inline(always)]
+    pub unsafe fn dec(&self) -> u32 {
+        unsafe { self.0.lock().dec() }
+    }
+    #[inline(always)]
+    pub fn should_delete(&self) -> bool {
+        self.0.lock().should_delete()
+    }
+    #[inline(always)]
+    pub fn fetch_count(&self) -> u32 {
+        self.0.lock().fetch_count()
+    }
+
+    #[inline(always)]
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(RefCounted::new())))
+    }
+    #[inline(always)]
+    pub fn new_protected() -> Self {
+        Self(Arc::new(Mutex::new(RefCounted::new_protected())))
+    }
+
+    #[inline(always)]
+    pub fn protect(&self) {
+        self.0.lock().protect();
+    }
+    #[inline(always)]
+    pub unsafe fn unprotect(&self) {
+        unsafe {
+            self.0.lock().unprotect();
+        }
+    }
+    #[inline(always)]
+    pub fn get_group(&self) -> Option<RefCountedGroup> {
+        self.0.lock().get_group().cloned()
+    }
+    #[inline(always)]
+    pub unsafe fn set_group(&self, group: Option<RefCountedGroup>) {
+        unsafe {
+            self.0.lock().set_group(group);
+        }
+    }
+    #[inline(always)]
+    pub fn reference(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
 pub trait RefCountedEntityCommandsExt: Sized {
     unsafe fn inc_ref(&mut self) -> &mut Self;
     unsafe fn dec_ref(&mut self) -> &mut Self;
@@ -156,10 +212,10 @@ pub trait RefCountedEntityCommandsExt: Sized {
 }
 
 pub mod commands {
-    use super::{EntityWorldMut, RefCounted, Result};
+    use super::{EntityWorldMut, RefCountedComponent, Result};
     pub fn inc_ref_command(mut w: EntityWorldMut) -> Result<()> {
         let new_count = unsafe {
-            w.get_mut::<RefCounted>()
+            w.get_mut::<RefCountedComponent>()
                 .ok_or_else(|| "not a refcounted")?
                 .inc()
         };
@@ -168,7 +224,7 @@ pub mod commands {
     }
     pub fn dec_ref_command(mut w: EntityWorldMut) -> Result<()> {
         let new_count = unsafe {
-            w.get_mut::<RefCounted>()
+            w.get_mut::<RefCountedComponent>()
                 .ok_or_else(|| "not a refcounted")?
                 .dec()
         };
@@ -176,7 +232,7 @@ pub mod commands {
         Ok(())
     }
     pub fn protect_command(mut w: EntityWorldMut) -> Result<()> {
-        w.get_mut::<RefCounted>()
+        w.get_mut::<RefCountedComponent>()
             .ok_or_else(|| "not a refcounted")?
             .protect();
         Ok(())
@@ -247,33 +303,43 @@ impl<'a> RefCountedEntityCommandsExt for EntityWorldMut<'a> {
         self
     }
 }
-pub fn refcounted_check_dead(
-    mut q: Query<(Entity, &mut RefCounted), (Changed<RefCounted>, Allow<DisabledObject>)>,
-    mut commands: Commands,
+fn refcounted_check_dead(
+    q: Query<(Entity, &RefCountedComponent), Allow<DisabledObject>>,
+    par_commands: ParallelCommands,
 ) {
     if FAST_FLAGS.fetch::<FFDisableRefCountedGC>() {
         return;
     }
-    for (e, mut r) in q.iter_mut() {
-        if r.should_delete_mut() {
-            debug_assert!(r.fetch_count_mut() == 0);
-            bevy::log::trace!(target: "bevy_rblx::RefCounted", "deleting entity {e} with {} references ({:?} group refs)", r.count, r.group.as_ref().map(|x| x.inner.load(Ordering::Acquire)));
-            commands.entity(e).detach_all_children().despawn();
+    q.par_iter().for_each(|(e, r)| {
+        let locked = r.0.lock();
+        if locked.should_delete() {
+            debug_assert!(locked.fetch_count() == 0);
+            bevy::log::trace!(target: "bevy_rblx::RefCounted", "deleting entity {e} with {} references ({:?} group refs)", locked.count, locked.group.as_ref().map(|x| x.inner.load(Ordering::Acquire)));
+            par_commands.command_scope(move |mut commands| {
+                commands.entity(e).detach_all_children().despawn();
+            });
         } else {
-            bevy::log::trace!(target: "bevy_rblx::RefCounted", "{e} has {} references ({:?} group refs)", r.count, r.group.as_ref().map(|x| x.inner.load(Ordering::Acquire)));
+            bevy::log::trace!(target: "bevy_rblx::RefCounted", "{e} has {} references ({:?} group refs)", locked.count, locked.group.as_ref().map(|x| x.inner.load(Ordering::Acquire)));
         }
-    }
+    })
 }
 
 // SAFETY: mut RefCounted assures no entity can be deleted during execution of the group system.
-pub fn assign_refcounted_groups(
-    changed_entities: Query<Entity, (Changed<ChildOf>, With<RefCounted>, Allow<DisabledObject>)>,
+fn assign_refcounted_groups(
+    changed_entities: Query<
+        Entity,
+        (
+            Changed<ChildOf>,
+            With<RefCountedComponent>,
+            Allow<DisabledObject>,
+        ),
+    >,
     mut removed_parents: RemovedComponents<ChildOf>,
 
-    mut refs: Query<&mut RefCounted, Allow<DisabledObject>>,
+    mut refs: Query<&mut RefCountedComponent, Allow<DisabledObject>>,
 
-    ancestors: Query<&ChildOf, (With<RefCounted>, Allow<DisabledObject>)>,
-    descendants: Query<&Children, (With<RefCounted>, Allow<DisabledObject>)>,
+    ancestors: Query<&ChildOf, (With<RefCountedComponent>, Allow<DisabledObject>)>,
+    descendants: Query<&Children, (With<RefCountedComponent>, Allow<DisabledObject>)>,
 ) {
     let mut checked = HashSet::new();
     for hierarchy in removed_parents.read() {
@@ -304,7 +370,7 @@ pub fn assign_refcounted_groups(
             } else {
                 break 'next_parent; // no valid group
             };
-            let group = r.get_group().cloned();
+            let group = r.get_group().clone();
             drop(r);
 
             if let Some(group) = group {
@@ -329,12 +395,43 @@ pub fn assign_refcounted_groups(
 #[derive(Clone, Copy, Default, Debug, Reflect)]
 pub struct RefCountedPlugin;
 
+#[cfg(debug_assertions)]
+#[derive(Default, Debug, Reflect, Component)]
+#[component(clone_behavior = Ignore)]
+struct RefCountedMonitor {
+    count: u32,
+    group_count: Option<u32>,
+}
+
+#[cfg(debug_assertions)]
+fn rc_monitor(
+    q: Query<(Entity, &RefCountedComponent), Allow<DisabledObject>>,
+    mut commands: Commands,
+) {
+    commands.insert_batch(
+        q.iter()
+            .map(|(e, r)| {
+                let locked = r.0.lock();
+                (
+                    e,
+                    RefCountedMonitor {
+                        count: locked.count,
+                        group_count: locked.group.as_ref().map(|g| g.inner.load(Relaxed)),
+                    },
+                )
+            })
+            .collect::<Vec<_>>(),
+    );
+}
+
 impl Plugin for RefCountedPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Last,
             (assign_refcounted_groups, refcounted_check_dead).chain(),
         );
+        #[cfg(debug_assertions)]
+        app.add_systems(Last, rc_monitor);
     }
 }
 

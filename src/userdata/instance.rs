@@ -78,7 +78,7 @@ pub fn instance_new(lua: &Lua, class_name: String) -> LuaResult<ObjectRef> {
     Ok(ObjectRef::new(lua, e))
 }
 
-pub struct InstanceSingleton;
+struct InstanceSingleton;
 
 #[register]
 impl LuaSingleton for InstanceSingleton {

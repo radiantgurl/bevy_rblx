@@ -1,5 +1,6 @@
 mod clock;
 mod dynamic_table;
+mod event_queue;
 mod function;
 mod security;
 
@@ -8,13 +9,14 @@ pub use function::CachedLuaFunction;
 pub use security::{SecurityContext, ThreadIdentityType};
 
 pub(crate) use dynamic_table::DynamicLuaVec;
+pub use event_queue::{EventQueue, EventQueueNoArgs, EventWithArgs};
 pub use luau::{
     ContainerProvenance, FFLuauDebugLevel, FFLuauDefaultJit, FFLuauGlobalTypeInfoLevel,
     FFLuauOptimization, LuauContainer, ThreadIdentity,
 };
 pub use scheduler::{
-    FFTaskSchedulerDisableWatchdog, FFTaskSchedulerEraseTableOnShutdown,
-    FFTaskSchedulerTimeSensitive, TaskScheduler,
+    FFTaskSchedulerDisableWatchdog, FFTaskSchedulerEraseTableOnShutdown, FFTaskSchedulerV2,
+    TaskScheduler,
 };
 pub use world_access::{WorldAccess, WorldAccessCommands, WorldReadOnlyAccess};
 

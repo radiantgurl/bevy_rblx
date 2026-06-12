@@ -365,6 +365,12 @@ impl RBXScriptSignal {
         let mut single: LuaUserDataRefMut<RBXScriptSignalSingle> = u.borrow_typed_mut()?;
         single.connect(u.clone(), lua, func)
     }
+    pub fn connect_parallel(&self, lua: &Lua, func: LuaFunction) -> LuaResult<RBXScriptConnection> {
+        let v = self.into_lua(lua)?;
+        let u = v.as_userdata().expect("must_be_userdata");
+        let mut single: LuaUserDataRefMut<RBXScriptSignalSingle> = u.borrow_typed_mut()?;
+        single.connect_parallel(u.clone(), lua, func)
+    }
 }
 
 // 0 = IMMEDIATE

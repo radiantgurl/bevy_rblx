@@ -11,7 +11,11 @@ use std::{
 use crate::core::{FAST_FLAGS, logs::push_lua_error, lua::singleton::LuaSingleton};
 use bevy::prelude::*;
 use bevy_rblx_derive::{fast_flag, register};
-use mlua::{AppDataRef, prelude::*};
+use mlua::{
+    AppDataRef,
+    ffi::{lua_isyieldable, lua_pushboolean},
+    prelude::*,
+};
 
 use crate::internal_prelude::*;
 
@@ -101,7 +105,6 @@ impl TaskScheduler {
         let pd = task.parallel_dispatch as usize;
         let t = t.into_lua_thread(lua)?;
         task.defer_next_threads[pd].push((t.clone(), values.into_lua_multi(lua)?));
-        println!("deferred thread {:x?}", t.to_pointer());
         Ok(t)
     }
     pub fn defer_next_frame_custom_pd(
@@ -120,8 +123,8 @@ impl TaskScheduler {
     pub fn delay(
         &self,
         lua: &Lua,
-        t: impl IntoLuaThread,
         delay: Duration,
+        t: impl IntoLuaThread,
         values: impl IntoLuaMulti,
     ) -> LuaResult<LuaThread> {
         let mut task = self.cell.borrow_mut();
@@ -166,14 +169,28 @@ impl TaskScheduler {
     pub fn cancel(&self, lua: &Lua, thread: LuaThread) -> LuaResult<()> {
         match thread.status() {
             LuaThreadStatus::Resumable => {
-                thread.reset(lua.app_data_ref::<EmptyCompiled>().unwrap().0.clone())
+                thread.reset(lua.app_data_ref::<EmptyCompiled>().unwrap().0.clone())?;
+                thread.resume::<()>(()) // mark it as finished
             }
             LuaThreadStatus::Running => {
-                todo!()
+                // at next scheduler cycle it wont be running
+                let t = lua.create_function(Self::cancel_lua)?;
+                self.defer_high_priority(lua, t, thread)?;
+                Ok(())
             }
             _ => Ok(()),
         }
     }
+
+    pub fn can_yield(lua: &Lua) -> bool {
+        unsafe {
+            lua.exec_raw::<bool>((), move |l| {
+                lua_pushboolean(l, lua_isyieldable(l));
+            })
+            .unwrap()
+        }
+    }
+
     fn spawn_lua(lua: &Lua, mut values: LuaMultiValue) -> LuaResult<LuaThread> {
         let task = lua.app_data_ref::<TaskScheduler>().unwrap();
         let ft = values.pop_front().unwrap_or_default();
@@ -186,13 +203,13 @@ impl TaskScheduler {
     }
     fn delay_lua(
         lua: &Lua,
-        (ft, delay, values): (LuaValue, f64, LuaMultiValue),
+        (delay, ft, values): (f64, LuaValue, LuaMultiValue),
     ) -> LuaResult<LuaThread> {
         let task = lua.app_data_ref::<TaskScheduler>().unwrap();
         task.delay(
             lua,
-            ft,
             Duration::try_from_secs_f64(delay).into_lua_err()?,
+            ft,
             values,
         )
     }
@@ -248,10 +265,19 @@ impl TaskScheduler {
         task.cancel(lua, thr)
     }
     #[cfg(feature = "deprecated")]
-    fn spawn_deprecated_lua(lua: &Lua, mut values: LuaMultiValue) -> LuaResult<LuaThread> {
+    fn spawn_deprecated_lua(lua: &Lua, ft: LuaValue) -> LuaResult<LuaThread> {
         let task = lua.app_data_ref::<TaskScheduler>().unwrap();
-        let ft = values.pop_front().unwrap_or_default();
-        task.defer_next_frame(lua, ft, values)
+        task.defer_next_frame(lua, ft, ())
+    }
+    #[cfg(feature = "deprecated")]
+    fn delay_deprecated_lua(lua: &Lua, (delay, ft): (f64, LuaValue)) -> LuaResult<LuaThread> {
+        let task = lua.app_data_ref::<TaskScheduler>().unwrap();
+        let checked_delay = if delay.is_normal() {
+            delay.min(0.0)
+        } else {
+            0.0
+        };
+        task.delay(lua, Duration::from_secs_f64(checked_delay), ft, ())
     }
     #[cfg(feature = "deprecated")]
     async fn wait_deprecated_lua(lua: Lua, (delay,): (f64,)) -> LuaResult<f64> {
@@ -307,20 +333,12 @@ impl TaskScheduler {
 
         if new_frame {
             let defer_new_frame_threads = take(&mut self.cell.borrow_mut().defer_next_threads[pd]);
-            let is_empty = defer_new_frame_threads.is_empty();
             for (t, v) in defer_new_frame_threads {
-                println!("thread {:x?} status {:?}", t.to_pointer(), t.status());
                 if t.status() == LuaThreadStatus::Resumable {
                     if let Err(e) = t.resume::<()>(v) {
                         push_lua_error(lua, e);
                     }
                 }
-            }
-            if !is_empty {
-                println!(
-                    "is empty after: {}",
-                    self.cell.borrow().defer_next_threads[pd].is_empty()
-                );
             }
         }
 
@@ -339,11 +357,10 @@ impl TaskScheduler {
 
             repeat &= self.cell.borrow().defer_threads[pd].len() > 0;
 
-            if FAST_FLAGS.fetch::<FFTaskSchedulerTimeSensitive>() || new_frame {
+            if FAST_FLAGS.fetch::<FFTaskSchedulerV2>() || new_frame {
                 let mut still_waiting_delay = Vec::new();
                 let new_delay_threads = take(&mut self.cell.borrow_mut().delay_threads[pd]);
                 for (t, i, d, v) in new_delay_threads {
-                    println!("thread {:x?} status {:?}", t.to_pointer(), t.status());
                     if t.status() == LuaThreadStatus::Resumable {
                         if Instant::now().duration_since(i) >= d {
                             if let Err(e) = t.resume::<()>(v) {
@@ -359,7 +376,6 @@ impl TaskScheduler {
                 let mut still_waiting_wait = Vec::new();
                 let new_waiting_threads = take(&mut self.cell.borrow_mut().wait_threads[pd]);
                 for (t, i, d) in new_waiting_threads {
-                    println!("thread {:x?} status {:?}", t.to_pointer(), t.status());
                     if t.status() == LuaThreadStatus::Resumable {
                         if Instant::now().duration_since(i) >= d {
                             if let Err(e) =
@@ -476,6 +492,10 @@ impl LuaSingleton for TaskScheduler {
                 lua.create_function(TaskScheduler::spawn_deprecated_lua)?,
             )?;
             lua.globals().raw_set(
+                "delay",
+                lua.create_function(TaskScheduler::delay_deprecated_lua)?,
+            )?;
+            lua.globals().raw_set(
                 "wait",
                 lua.create_async_function(TaskScheduler::wait_deprecated_lua)?,
             )?;
@@ -486,5 +506,5 @@ impl LuaSingleton for TaskScheduler {
 }
 
 fast_flag!(FFTaskSchedulerDisableWatchdog: bool = false);
-fast_flag!(FFTaskSchedulerTimeSensitive: bool = false);
+fast_flag!(FFTaskSchedulerV2: bool = false);
 fast_flag!(FFTaskSchedulerEraseTableOnShutdown: bool = true);

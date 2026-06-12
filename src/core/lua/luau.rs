@@ -75,6 +75,7 @@ unsafe extern "C-unwind" fn thread_create_delete_callback(
 ) {
     unsafe {
         if !parent.is_null() {
+            trace!(target: "bevy_rblx::luau", "creating thread: LP={parent:x?} L={child:x?}");
             let parent_lua = Lua::get_or_init_from_ptr(parent);
             let t = parent_lua
                 .exec_raw::<LuaThread>((), |l| {
@@ -84,6 +85,7 @@ unsafe extern "C-unwind" fn thread_create_delete_callback(
                 .unwrap();
             ThreadIdentity::set_thread(parent_lua, t, ThreadIdentity::fetch(parent_lua));
         } else {
+            trace!(target: "bevy_rblx::luau", "deleting thread: L={child:x?}");
             let lua = Lua::get_or_init_from_ptr(child);
             ThreadIdentity::erase_thr(lua, child as usize);
         }

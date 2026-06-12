@@ -1,11 +1,12 @@
 use std::{
-    mem::{ManuallyDrop, forget, take},
+    mem::{forget, take},
     sync::LazyLock,
 };
 
 use crate::{
     core::{
-        SecurityContext, ThreadIdentity, WorldAccess, bevy::RefCounted, lua::CachedLuaFunction,
+        SecurityContext, ThreadIdentity, WorldAccess, bevy::RefCountedComponent,
+        lua::CachedLuaFunction,
     },
     internal_prelude::*,
     userdata::{LuaFreeValue, ObjectRef, RBXScriptSignal},
@@ -18,7 +19,7 @@ use lazy_static::lazy_static;
 use mlua::prelude::*;
 
 #[derive(Component, Clone, Debug, Reflect)]
-#[require(RefCounted)]
+#[require(RefCountedComponent)]
 #[reflect(opaque)]
 pub struct ObjectHeader {
     pub vtable: &'static ObjectVTable,
@@ -264,72 +265,6 @@ impl ObjectContext {
     }
 }
 
-impl ObjectPropertyInfo {
-    #[deprecated = "use ObjectContext::fire_changed instead"]
-    pub fn fire_changed_event(
-        &'static self,
-        lua: &Lua,
-        object: Entity,
-        vtable: &'static ObjectVTable,
-    ) -> LuaResult<()> {
-        let new_value = LuaFreeValue::from_lua((self.getter)(lua, object, vtable)?, lua)?;
-        let mut res;
-        #[cfg(not(feature = "deprecated"))]
-        {
-            let changed;
-            let property_changed_signal;
-            {
-                let world_access = WorldAccess::fetch_readonly(lua);
-                let world = world_access.access_read_only();
-                let header = world.get::<ObjectHeader>(object).expect("entity is object");
-                changed = header.changed.reference();
-                if let Some(ev) = header.property_changed.get(self.property_name) {
-                    property_changed_signal = Some(ev.reference());
-                } else {
-                    property_changed_signal = None;
-                }
-            }
-            res = changed.fire_in_lua(lua, self.property_name == "Parent", self.property_name);
-            if let Some(property_changed) = property_changed_signal {
-                res = res.and(property_changed.fire_in_lua(
-                    lua,
-                    self.property_name == "Parent",
-                    new_value,
-                ));
-            }
-        }
-        #[cfg(feature = "deprecated")]
-        {
-            let changed;
-            let property_changed_signal;
-            {
-                let world_access = WorldAccess::fetch_readonly(lua);
-                let world = world_access.access_read_only();
-                let header = world.get::<ObjectHeader>(object).expect("entity is object");
-                changed = header.changed.reference();
-                if let Some(ev) = header.property_changed.get(self.property_name) {
-                    property_changed_signal = Some(ev.reference());
-                } else {
-                    property_changed_signal = None;
-                }
-            }
-            res = changed.fire_in_lua(
-                lua,
-                self.property_name == "Parent" || self.property_name == "parent",
-                self.property_name,
-            );
-            if let Some(property_changed) = property_changed_signal {
-                res = res.and(property_changed.fire_in_lua(
-                    lua,
-                    self.property_name == "Parent",
-                    new_value,
-                ));
-            }
-        }
-        res
-    }
-}
-
 #[derive(Debug)]
 pub struct ObjectMethodInfo {
     pub method_name: &'static str,
@@ -397,8 +332,7 @@ impl ObjectField {
             ObjectField::Property(object_property_info) => {
                 if let Some(setter) = object_property_info.setter {
                     let mut ctx = ObjectContext::new_property_setter(vtable, *object_property_info);
-                    setter(lua, object, &mut ctx, value)?;
-                    ctx.fire_changed(lua, object)?;
+                    setter(lua, object, &mut ctx, value).and(ctx.fire_changed(lua, object))?;
                     return Ok(());
                 }
             }

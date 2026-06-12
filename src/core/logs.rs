@@ -1,3 +1,4 @@
+use std::fmt;
 use std::mem::take;
 
 use crate::core::lua::{LuaSingleton, WorldAccess, system_time};
@@ -23,15 +24,51 @@ pub struct LoggedMessage {
     pub time: i64,
 }
 
-pub fn push_lua_error(lua: &Lua, error: LuaError) {
-    let formatted = match error {
-        LuaError::RuntimeError(m) => m,
-        e => e.to_string(),
-    };
-    push_log(lua, MessageType::MessageError, formatted);
+fn format_error(f: &mut fmt::Formatter, e: &LuaError) -> Result<(), fmt::Error> {
+    use std::fmt::Display;
+    match e {
+        LuaError::RuntimeError(s) | LuaError::SyntaxError { message: s, .. } => s.fmt(f),
+        LuaError::CallbackError { traceback, cause } => {
+            let (mut cause, mut full_traceback) = (cause, None);
+            while let LuaError::CallbackError {
+                cause: cause2,
+                traceback: traceback2,
+            } = &**cause
+            {
+                cause = cause2;
+                full_traceback = Some(traceback2);
+            }
+            format_error(f, cause)?;
+            f.write_str("\n")?;
+            if let Some(full_traceback) = full_traceback {
+                let traceback = traceback.trim_start_matches("stack traceback:");
+                let traceback = traceback.trim_start().trim_end();
+                // Try to find local traceback within the full traceback
+                if let Some(pos) = full_traceback.find(traceback) {
+                    write!(f, "{}", &full_traceback[..pos])?;
+                    writeln!(f, ">{}", &full_traceback[pos..].trim_end())?;
+                } else {
+                    writeln!(f, "{}", full_traceback.trim_end())?;
+                }
+            } else {
+                writeln!(f, "{}", traceback.trim_end())?;
+            }
+            Ok(())
+        }
+        LuaError::WithContext { context, cause } => {
+            format_error(f, cause)?;
+            write!(f, "\n{context}")
+        }
+        e => e.fmt(f),
+    }
 }
 
-pub fn push_log(lua: &Lua, msg_type: MessageType, msg: impl std::fmt::Display) {
+pub fn push_lua_error(lua: &Lua, error: LuaError) {
+    let wrapped = fmt::from_fn(|f| format_error(f, &error));
+    push_log(lua, MessageType::MessageError, format!("{wrapped}"));
+}
+
+pub fn push_log(lua: &Lua, msg_type: MessageType, msg: impl fmt::Display) {
     let msg = msg.to_string();
     let world_access = WorldAccess::fetch_readonly(lua);
     let mut commands = world_access.access_commands();

@@ -2,7 +2,7 @@ use crate::{
     enums::LuaEnums,
     userdata::{
         CFrame, LuaSendRaycastParams, ObjectRef, Ray, RaycastParams, RaycastResult, Vector2,
-        Vector3,
+        Vector2int16, Vector3, Vector3int16,
     },
 };
 
@@ -12,7 +12,7 @@ use mlua::{
     prelude::*,
 };
 
-#[derive(Clone, Default, Debug, Reflect)]
+#[derive(Clone, Default, Debug, Reflect, PartialEq)]
 #[non_exhaustive]
 pub enum LuaFreeValue {
     #[default]
@@ -29,6 +29,8 @@ pub enum LuaFreeValue {
     CFrame(CFrame),
     Vector3(Vector3),
     Vector2(Vector2),
+    Vector3int16(Vector3int16),
+    Vector2int16(Vector2int16),
 
     EnumItem(String, String),
     Enum(String),
@@ -66,11 +68,17 @@ impl FromLua for LuaFreeValue {
                 })?;
                 match type_name.as_str() {
                     "Instance" | "Object" => Ok(LuaFreeValue::Object(
-                        any_user_data.borrow::<ObjectRef>()?.clone_lua(lua),
+                        any_user_data.borrow::<ObjectRef>()?.clone(),
                     )),
                     "CFrame" => Ok(LuaFreeValue::CFrame(*any_user_data.borrow::<CFrame>()?)),
                     "Vector3" => Ok(LuaFreeValue::Vector3(*any_user_data.borrow::<Vector3>()?)),
                     "Vector2" => Ok(LuaFreeValue::Vector2(*any_user_data.borrow::<Vector2>()?)),
+                    "Vector3int16" => Ok(LuaFreeValue::Vector3int16(
+                        *any_user_data.borrow::<Vector3int16>()?,
+                    )),
+                    "Vector2int16" => Ok(LuaFreeValue::Vector2int16(
+                        *any_user_data.borrow::<Vector2int16>()?,
+                    )),
                     "EnumItem" => {
                         let origin = any_user_data.get::<String>("Origin")?;
                         let value = any_user_data.get::<String>("Name")?;
@@ -109,11 +117,13 @@ impl IntoLua for LuaFreeValue {
             LuaFreeValue::Number(n) => Ok(LuaValue::Number(n)),
             LuaFreeValue::Vector(v) => Ok(LuaValue::Vector(LuaVector::new(v.x, v.y, v.z))),
             LuaFreeValue::String(s) => s.into_lua(lua),
-            LuaFreeValue::Object(o) => o.change_lua(lua).into_lua(lua),
+            LuaFreeValue::Object(o) => o.into_lua(lua),
             LuaFreeValue::Buffer(items) => Ok(LuaValue::Buffer(lua.create_buffer(items)?)),
             LuaFreeValue::CFrame(cframe) => cframe.into_lua(lua),
             LuaFreeValue::Vector3(vector3) => vector3.into_lua(lua),
             LuaFreeValue::Vector2(vector2) => vector2.into_lua(lua),
+            LuaFreeValue::Vector3int16(vector3int16) => vector3int16.into_lua(lua),
+            LuaFreeValue::Vector2int16(vector2int16) => vector2int16.into_lua(lua),
             LuaFreeValue::EnumItem(origin, value) => {
                 let enums = LuaEnums.into_lua(lua)?;
                 let enums_ud = enums.as_userdata().unwrap();
@@ -147,13 +157,14 @@ impl LuaValueExt for LuaValue {
 }
 
 #[diagnostic::on_unimplemented(
-    message = "{Self} is not transferrable across Lua instances",
-    label = "cannot be shared between Lua instances",
-    note = "you could probably convert this into a LuaFreeValue to transfer it between instances if the type is primitive enough"
+    message = "{Self} is not transferrable across the Luau VM boundary",
+    label = "cannot be sent between Luau VMs",
+    note = "you could probably convert this into a LuaFreeValue to transfer it"
 )]
 pub auto trait LuaSend {}
 
 impl !LuaSend for LuaValue {}
+impl !LuaSend for LuaMultiValue {}
 impl !LuaSend for LuaTable {}
 impl !LuaSend for LuaFunction {}
 impl !LuaSend for LuaThread {}

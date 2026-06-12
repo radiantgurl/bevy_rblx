@@ -719,7 +719,24 @@ register_class! {
             Ok(false)
         }
         fn is_property_modified(lua: &Lua, this: ObjectRef, property: String) -> LuaResult<bool> {
-            lua_todo!()
+            let wa = WorldAccess::fetch_readonly(lua);
+            let world = wa.access_read_only();
+
+            let vtable = world.get::<ObjectHeader>(this.entity()).unwrap().vtable;
+            drop(world);
+            drop(wa);
+
+            let field = vtable.lazy_full_fields.get(property.as_str()).ok_or_else(|| LuaError::runtime(format!("property {property:?} does not exist on object of class {}", vtable.class_name)))?;
+            let prop_info = match field {
+                super::object::ObjectField::Property(object_property_info) => *object_property_info,
+                _ => return Err(LuaError::runtime(format!("field {property:?} is a method and not a property")))
+            };
+
+            if let Some(default_getter) = prop_info.default_value {
+                Ok((default_getter)(lua)? != (prop_info.getter)(lua, this.entity(), vtable)?.into_free_value(lua)?)
+            } else {
+                Ok(false)
+            }
         }
         fn query_descendants(lua: &Lua, this: ObjectRef, selector: String) -> LuaResult<LuaValue> {
             lua_todo!()
@@ -745,7 +762,28 @@ register_class! {
             CollectionService::remove_tag(lua, (ObjectRef::new(lua, cs), this, tag))
         }
         fn reset_property_to_default(lua: &Lua, this: ObjectRef, property: String) -> LuaResult<()> {
-            lua_todo!()
+            let wa = WorldAccess::fetch(lua);
+            let world = wa.access_read_only();
+
+            let vtable = world.get::<ObjectHeader>(this.entity()).unwrap().vtable;
+            drop(world);
+            drop(wa);
+
+            let field = vtable.lazy_full_fields.get(property.as_str()).ok_or_else(|| LuaError::runtime(format!("property {property:?} does not exist on object of class {}", vtable.class_name)))?;
+            let prop_info = match field {
+                super::object::ObjectField::Property(object_property_info) => *object_property_info,
+                _ => return Err(LuaError::runtime(format!("field {property:?} is a method and not a property")))
+            };
+
+            if let Some(default_getter) = prop_info.default_value && let Some(setter) = prop_info.setter {
+                let default_value = (default_getter)(lua)?;
+                if default_value != (prop_info.getter)(lua, this.entity(), vtable)?.into_free_value(lua)? {
+                    let mut ctx = ObjectContext::new_property_setter(vtable, prop_info);
+                    (setter)(lua, this.entity(), &mut ctx, default_value.into_lua(lua)?)
+                        .and(ctx.fire_changed(lua, this.entity()))?;
+                }
+            }
+            Ok(())
         }
         fn set_attribute(lua: &Lua, this: ObjectRef, attribute: String, value: LuaValue) -> LuaResult<()> {
             let new_value = LuaFreeValue::from_lua(value, lua)?;
@@ -771,11 +809,8 @@ register_class! {
             let instant = Instant::now();
             let mut printed_warning = false;
             loop {
-                println!("wait for child {}s", instant.elapsed().as_secs_f64());
                 TaskScheduler::fetch(&lua).defer_next_frame(&lua, lua.current_thread(), ())?;
-                println!("yielding");
                 lua.yield_with::<()>(()).await?;
-                println!("resuming");
                 if let Some(i) = Instance::find_first_child(&lua, (this.clone(), name.clone()))? {
                     return Ok(Some(i));
                 }

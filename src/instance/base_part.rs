@@ -52,18 +52,34 @@ register_class! {
             let world = wa.access_read_only();
             Vector3::from(world.get::<Transform>(this).unwrap().translation).into_lua(lua)
         }]
+        #[setter=fn(lua: &Lua, this: Entity, ctx: &mut ObjectContext, v: LuaValue) -> LuaResult<()> {
+            let value = Into::<Vec3>::into(Vector3::from_lua(v, lua)?);
+
+            let mut wa = WorldAccess::fetch(lua);
+            let world = wa.access_synchronized()?;
+
+            let mut transform = world.get_mut::<Transform>(this).unwrap();
+            if transform.translation != value {
+                ctx.set_changed();
+                transform.translation = value;
+            }
+            Ok(())
+        }]
+        #[changed_aliases=["CFrame"]]
         virtual position: Vector3,
         #[getter=fn(lua: &Lua, this: Entity, _vtable: &'static ObjectVTable) -> LuaResult<LuaValue> {
             let wa = WorldAccess::fetch_readonly(lua);
             let world = wa.access_read_only();
             Vector3::from(Vec3::from(world.get::<Transform>(this).unwrap().rotation.to_euler(EulerRot::YXZ))).into_lua(lua)
         }]
+        #[changed_aliases=["CFrame", "Rotation"]]
         virtual orientation: Vector3,
         #[getter=fn(lua: &Lua, this: Entity, _vtable: &'static ObjectVTable) -> LuaResult<LuaValue> {
             let wa = WorldAccess::fetch_readonly(lua);
             let world = wa.access_read_only();
             Vector3::from(Vec3::from(world.get::<Transform>(this).unwrap().rotation.to_euler(EulerRot::XYZ))).into_lua(lua)
         }]
+        #[changed_aliases=["CFrame", "Orientation"]]
         virtual rotation: Vector3,
 
         #[default=true]
