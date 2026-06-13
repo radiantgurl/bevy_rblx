@@ -49,7 +49,7 @@ use crate::{
         lua::{
             FFTaskSchedulerV2, clock,
             luau::{assign_provenance, create_provenance, erase_provenance},
-            world_access::WorldAccessDesyncGuard,
+            world_access::{PlaceholderWorld, WorldAccessDesyncGuard},
         },
         object::{
             DisabledObject, NewInstanceEvent, RunServiceMembers,
@@ -69,14 +69,12 @@ pub struct Engine;
 pub struct ShutdownReason(pub CloseReason);
 
 pub(super) fn initialize(w: &mut World) {
-    let mut placeholder = Some(World::new());
     let container = LuauContainer::default();
     clock(); // initialize clock
     let root_instance;
     {
         let _guard = WorldAccess::fetch(&container.lua).insert_sync_access(
             w,
-            &mut placeholder,
             &container.lua,
         );
 
@@ -95,10 +93,7 @@ pub(super) fn initialize(w: &mut World) {
     w.entity_mut(root_instance).insert(container);
 }
 
-pub(super) fn run_synchronized(world: &mut World, mut placeholder: Local<Option<World>>) {
-    if placeholder.is_none() {
-        *placeholder = Some(World::new());
-    }
+pub(super) fn run_synchronized(world: &mut World) {
     let mut containers = world.query::<&LuauContainer>();
 
     let lua_cloned_iter = containers
@@ -106,7 +101,7 @@ pub(super) fn run_synchronized(world: &mut World, mut placeholder: Local<Option<
         .map(|c| c.lua.clone())
         .collect::<Vec<_>>();
     for lua in lua_cloned_iter {
-        let _guard = WorldAccess::fetch(&lua).insert_sync_access(world, &mut placeholder, &lua);
+        let _guard = WorldAccess::fetch(&lua).insert_sync_access(world, &lua);
 
         TaskScheduler::fetch(&lua).run(&lua, false, true, Duration::from_secs(0), None);
         if !FAST_FLAGS.fetch::<FFDisableLuauGC>() {
@@ -149,10 +144,7 @@ pub(super) fn run_desynchronized(world: &mut World, mut placeholder: Local<Optio
     );
 }
 
-pub(super) fn dispatch_synchronized(world: &mut World, mut placeholder: Local<Option<World>>) {
-    if placeholder.is_none() {
-        *placeholder = Some(World::new());
-    }
+pub(super) fn dispatch_synchronized(world: &mut World) {
     let mut containers = world.query::<&LuauContainer>();
 
     let lua_cloned_iter = containers
@@ -160,7 +152,7 @@ pub(super) fn dispatch_synchronized(world: &mut World, mut placeholder: Local<Op
         .map(|c| c.lua.clone())
         .collect::<Vec<_>>();
     for lua in lua_cloned_iter {
-        let _guard = WorldAccess::fetch(&lua).insert_sync_access(world, &mut placeholder, &lua);
+        let _guard = WorldAccess::fetch(&lua).insert_sync_access(world, &lua);
 
         TaskScheduler::fetch(&lua).run(&lua, false, false, Duration::from_secs(0), None);
     }
@@ -314,6 +306,7 @@ impl Engine {
         app.world_mut()
             .register_disabling_component::<DisabledObject>();
         app.insert_resource(RblxLogs::default());
+        app.insert_resource(PlaceholderWorld::default());
         app.insert_resource(Time::from_hz(60.0));
 
         app.add_systems(
@@ -827,7 +820,6 @@ impl Engine {
                     if *still_waiting {
                         let _guard = WorldAccess::fetch(lua).insert_sync_access(
                             w,
-                            &mut placeholder_world,
                             lua,
                         );
                         let task = TaskScheduler::fetch(lua);

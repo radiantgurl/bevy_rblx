@@ -1,5 +1,5 @@
 use std::cell::{RefCell, RefMut, UnsafeCell};
-use std::mem::{replace, swap, take};
+use std::mem::{ManuallyDrop, replace, swap, take};
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
@@ -14,13 +14,22 @@ use mlua::{AppDataRef, AppDataRefMut, prelude::*};
 enum InternalWorldAccess {
     #[default]
     None,
-    Synchronized {
+     Synchronized {
         world: RefCell<World>,
     },
     Desynchronized {
         commands: RefCell<CommandQueue>,
         read_only_world: Arc<World>,
     },
+}
+
+#[derive(Resource, Debug)]
+pub(in crate::core) struct PlaceholderWorld(Option<World>);
+
+impl Default for PlaceholderWorld {
+    fn default() -> Self {
+        Self(Some(World::new()))
+    }
 }
 impl std::fmt::Debug for InternalWorldAccess {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -58,12 +67,13 @@ enum InternalWorldReadOnlyAccess<'a> {
     Desynchronized(Arc<World>),
 }
 
-pub struct WorldAccessSyncGuard<'a>(Lua, &'a mut World, &'a mut Option<World>);
+pub struct WorldAccessSyncGuard<'a>(Lua, &'a mut World, Option<PlaceholderWorld>);
 
 impl<'a> Drop for WorldAccessSyncGuard<'a> {
     fn drop(&mut self) {
         let real_world = WorldAccess::fetch(&self.0).clear_sync_access();
-        *self.2 = Some(replace(self.1, real_world));
+        self.2.as_mut().unwrap().0 = Some(replace(self.1, real_world));
+        self.1.insert_resource(self.2.take().unwrap());
     }
 }
 
@@ -169,14 +179,13 @@ impl WorldAccess {
     pub fn insert_sync_access<'w: 's, 's>(
         &'s mut self,
         world: &'w mut World,
-        placeholder_world: &'w mut Option<World>,
         lua: &'s Lua,
     ) -> WorldAccessSyncGuard<'w> {
-        let unwrapped_placeholder = placeholder_world.take().unwrap();
+        let mut placeholder_world = world.remove_resource::<PlaceholderWorld>().expect("WorldAccess aliasing detected.");
         self.0 = InternalWorldAccess::Synchronized {
-            world: RefCell::new(replace(world, unwrapped_placeholder)),
+            world: RefCell::new(replace(world, placeholder_world.0.take().unwrap())),
         };
-        WorldAccessSyncGuard(lua.clone(), world, placeholder_world)
+        WorldAccessSyncGuard(lua.clone(), world, Some(placeholder_world))
     }
     fn insert_desync_access(&mut self, w: Arc<World>) {
         self.0 = InternalWorldAccess::Desynchronized {
@@ -201,7 +210,7 @@ impl WorldAccess {
     #[must_use = "world access is automatically dropped once the guard gets dropped. to control this behavior you may drop it manually."]
     pub(in crate::core) fn create<'a>(
         w: &'a mut World,
-        placeholder: &'a mut Option<World>,
+        placeholder: &'a mut Option<World>
     ) -> WorldAccessCreateGuard<'a> {
         let placeholder_unwrapped = placeholder.take().unwrap();
         let world = replace(w, placeholder_unwrapped);

@@ -169,12 +169,8 @@ register_class! {
 impl RunService {
     pub(in crate::core) fn simulation_hook(
         world: &mut World,
-        mut placeholder: Local<Option<World>>,
         mut frame_count: Local<u8>,
     ) {
-        if placeholder.is_none() {
-            *placeholder = Some(World::new());
-        }
         let dt = world.resource::<Time<Fixed>>().delta_secs_f64();
         let run_service = world
             .query_filtered::<Entity, With<RunServiceMembers>>()
@@ -194,7 +190,7 @@ impl RunService {
             };
             if should_run {
                 let _guard =
-                    WorldAccess::fetch(&lua).insert_sync_access(world, &mut placeholder, &lua);
+                    WorldAccess::fetch(&lua).insert_sync_access(world, &lua);
                 TaskScheduler::fetch(&lua).spawn(&lua, func, dt).unwrap();
             }
         }
@@ -202,14 +198,10 @@ impl RunService {
     }
     pub(in crate::core) fn render_hook(
         world: &mut World,
-        mut placeholder: Local<Option<World>>,
         mut frame_count: Local<u8>,
     ) {
         if world.get_resource::<Headless>().is_some() {
             return;
-        }
-        if placeholder.is_none() {
-            *placeholder = Some(World::new());
         }
         let dt = world.resource::<Time<Fixed>>().delta_secs_f64();
         let run_service = world
@@ -220,7 +212,7 @@ impl RunService {
             .render_callbacks
             .get_callbacks_cached()
         {
-            let _guard = WorldAccess::fetch(&lua).insert_sync_access(world, &mut placeholder, &lua);
+            let _guard = WorldAccess::fetch(&lua).insert_sync_access(world, &lua);
             TaskScheduler::fetch(&lua).spawn(&lua, func, dt).unwrap();
         }
         *frame_count = (*frame_count + 1) % 60;

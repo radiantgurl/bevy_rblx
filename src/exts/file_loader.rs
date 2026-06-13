@@ -83,6 +83,8 @@ impl EngineExtension for RblxFileLoader {
     }
 
     fn runtime_init(&self, world: &mut World) {
+        world.insert_resource(Messages::<LoadPlace>::default());
+        world.insert_resource(Messages::<LoadModel>::default());
         world.schedule_scope(First, |_, s| {
             s.add_systems(
                 file_loader_system

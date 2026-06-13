@@ -102,10 +102,7 @@ register_class! {
     }
 }
 
-pub fn register_game_and_workspace_global(w: &mut World, mut placeholder: Local<Option<World>>) {
-    if placeholder.is_none() {
-        *placeholder = Some(World::new());
-    }
+pub fn register_game_and_workspace_global(w: &mut World) {
     let game = w
         .query_filtered::<Entity, With<RootInstance>>()
         .single(w)
@@ -120,7 +117,7 @@ pub fn register_game_and_workspace_global(w: &mut World, mut placeholder: Local<
         .map(|x| x.lua.clone())
         .collect::<Vec<_>>();
     for lua in containers {
-        let _guard = WorldAccess::fetch(&lua).insert_sync_access(w, &mut placeholder, &lua);
+        let _guard = WorldAccess::fetch(&lua).insert_sync_access(w, &lua);
         lua.globals()
             .raw_set("game", ObjectRef::new(&lua, game))
             .unwrap();
