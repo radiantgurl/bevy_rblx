@@ -58,7 +58,7 @@ enum InternalWorldReadOnlyAccess<'a> {
     Desynchronized(Arc<World>),
 }
 
-pub(in crate::core) struct WorldAccessSyncGuard<'a>(Lua, &'a mut World, &'a mut Option<World>);
+pub struct WorldAccessSyncGuard<'a>(Lua, &'a mut World, &'a mut Option<World>);
 
 impl<'a> Drop for WorldAccessSyncGuard<'a> {
     fn drop(&mut self) {
@@ -166,7 +166,7 @@ impl WorldAccess {
         lua.app_data_ref().unwrap()
     }
     #[must_use = "world sync access is automatically dropped once the guard gets dropped. to control this behavior you may drop it manually."]
-    pub(in crate::core) fn insert_sync_access<'w: 's, 's>(
+    pub fn insert_sync_access<'w: 's, 's>(
         &'s mut self,
         world: &'w mut World,
         placeholder_world: &'w mut Option<World>,

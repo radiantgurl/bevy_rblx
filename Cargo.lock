@@ -1496,6 +1496,8 @@ dependencies = [
  "parking_lot",
  "ptree",
  "rbx_binary",
+ "rbx_dom_weak",
+ "rbx_types",
  "static_assertions",
 ]
 
