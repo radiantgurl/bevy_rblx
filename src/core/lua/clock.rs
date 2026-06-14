@@ -23,9 +23,13 @@ struct ClockSingleton;
 #[register]
 impl LuaSingleton for ClockSingleton {
     fn register_singleton(lua: &Lua) -> LuaResult<()> {
+        let clock_f = lua.create_function(|_, ()| Ok(clock().as_secs_f64()))?;
         lua.globals().raw_get::<LuaTable>("os")?.raw_set(
             "clock",
-            lua.create_function(|_, ()| Ok(clock().as_secs_f64()))?,
-        )
+            clock_f.clone(),
+        )?;
+        #[cfg(feature="deprecated")]
+        lua.globals().raw_set("elapsedTime", clock_f.clone())?;
+        Ok(())
     }
 }

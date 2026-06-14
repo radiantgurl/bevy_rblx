@@ -221,21 +221,17 @@ macro_rules! create_runservice_trigger {
         concat_idents::concat_idents!(trigger_runservice_event = runservice_event, _, $name, {
             pub fn trigger_runservice_event(
                 w: &mut World,
-                mut cached_event: Local<Option<RBXScriptSignal>>,
-                mut placeholder_world: Local<Option<World>>,
+                mut cached_event: Local<Option<RBXScriptSignal>>
             ) -> Result<(), BevyError> {
                 if cached_event.is_none() {
                     let mut members_qs = w.query::<&RunServiceMembers>();
                     let members = members_qs.single(w).expect("run service is initialized");
                     *cached_event = Some(members.$name.reference());
                 }
-                if placeholder_world.is_none() {
-                    *placeholder_world = Some(World::default());
-                }
 
                 let time = w.resource::<Time>().clone();
 
-                let mut wa = WorldAccess::create(w, &mut placeholder_world);
+                let mut wa = WorldAccess::create(w);
 
                 if stringify!($name) == "Stepped" {
                     cached_event.as_ref().unwrap().fire_outside_lua(
@@ -797,7 +793,7 @@ impl Engine {
             .unwrap_or(CloseReason::Unknown);
         let prev = FAST_FLAGS.fetch::<FFSignalBehavior>();
         {
-            let mut wa = WorldAccess::create(w, &mut placeholder_world);
+            let mut wa = WorldAccess::create(w);
             FAST_FLAGS.store::<FFSignalBehavior>(SignalBehavior::Deferred as u64);
             close.fire_outside_lua(&mut wa, false, reason).unwrap();
         }

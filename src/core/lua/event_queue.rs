@@ -3,7 +3,7 @@ use std::mem::forget;
 use mlua::prelude::*;
 
 use crate::{
-    core::WorldAccess,
+    core::{WorldAccess, templates::Takeable},
     userdata::{LuaSend, RBXScriptSignal},
 };
 
@@ -44,27 +44,15 @@ impl<T: IntoLuaMulti + Clone + LuaSend + ?Sized> EventWithArgs<T> {
     }
 }
 
-#[derive(Default)]
-struct QueueNoDrop;
-
-impl Drop for QueueNoDrop {
-    #[inline]
-    fn drop(&mut self) {
-        panic!("expected queue to be fired before being consumed");
-    }
-}
-
 pub struct EventQueue<T: IntoLuaMulti + Clone + LuaSend> {
-    queued: Vec<EventWithArgs<T>>,
-    no_drop: QueueNoDrop,
+    queued: Takeable<Vec<EventWithArgs<T>>>,
 }
 
 impl<T: IntoLuaMulti + Clone + LuaSend> EventQueue<T> {
     #[inline]
     pub const fn new() -> Self {
         Self {
-            queued: Vec::new(),
-            no_drop: QueueNoDrop,
+            queued: Takeable::new(Vec::new())
         }
     }
     #[inline]
@@ -72,22 +60,25 @@ impl<T: IntoLuaMulti + Clone + LuaSend> EventQueue<T> {
         self.queued.push(EventWithArgs::new(event, values));
     }
     #[inline]
-    pub fn fire_in_lua(self, lua: &Lua) -> LuaResult<()> {
-        let EventQueue { queued, no_drop } = self;
-        forget(no_drop);
-        for e in queued {
+    pub fn fire_in_lua(mut self, lua: &Lua) -> LuaResult<()> {
+        for e in self.queued.take() {
             e.fire_in_lua(lua)?;
         }
+        forget(self);
         Ok(())
     }
     #[inline]
-    pub fn fire_outside_lua(self, wa: &mut WorldAccess) -> LuaResult<()> {
-        let EventQueue { queued, no_drop } = self;
-        forget(no_drop);
-        for e in queued {
+    pub fn fire_outside_lua(mut self, wa: &mut WorldAccess) -> LuaResult<()> {
+        for e in self.queued.take() {
             e.fire_outside_lua(wa)?;
         }
+        forget(self);
         Ok(())
+    }
+}
+impl<T: IntoLuaMulti + Clone + LuaSend> Drop for EventQueue<T> {
+    fn drop(&mut self) {
+        bevy::log::warn!(target: "bevy_rblx::EventQueue", "Event queue has been dropped without being fired.");
     }
 }
 

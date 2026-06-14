@@ -18,6 +18,7 @@ union FastFlagInternalValue {
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum FastFlagType {
     String,
     Boolean,
@@ -40,6 +41,7 @@ impl std::fmt::Display for FastFlagType {
 
 #[derive(Clone, PartialEq, Debug)]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum FastFlagValue {
     String(String),
     Boolean(bool),
