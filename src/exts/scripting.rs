@@ -322,7 +322,7 @@ register_class! {
                 }
                 Ok(())
             })?;
-            InstanceMembers::fetch_members(&*world, this).destroying.once_internal(main_lua, f)?;
+            InstanceMembers::fetch_members(&*world, this).destroying.once_detached(main_lua, f)?;
             Ok(())
         }
     }]

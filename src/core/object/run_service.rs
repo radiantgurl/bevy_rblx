@@ -150,7 +150,7 @@ register_class! {
             drop(wa);
             let is_connected_fn = SIMULATION_IS_CONNECTED.fetch(lua).bind((this.clone(), id))?;
             let disconnect_fn = SIMULATION_DISCONNECT.fetch(lua).bind((this.clone(), id))?;
-            let signal = RBXScriptConnection::new_custom(is_connected_fn, disconnect_fn, ThreadIdentity::fetch(lua).script, lua);
+            let signal = RBXScriptConnection::new_custom(is_connected_fn, disconnect_fn, ThreadIdentity::fetch(lua).script.map(move |e| (e, lua)));
             Ok(signal)
         }
         fn unbind_from_render_step(lua: &Lua, this: ObjectRef, name: String) -> LuaResult<()> {

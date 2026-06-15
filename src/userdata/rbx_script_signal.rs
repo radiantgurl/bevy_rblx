@@ -119,7 +119,8 @@ impl RBXScriptSignalSingle {
         func: LuaFunction,
     ) -> LuaResult<RBXScriptConnection> {
         let script = ThreadIdentity::fetch(lua).script;
-        self.connect_internal(this_userdata, lua, func).map(move |x| x.attach_owned(script, lua))
+        self.connect_internal(this_userdata, lua, func)
+            .map(move |x| x.attach_owned(script, lua))
     }
     pub fn connect_internal(
         &mut self,
@@ -199,10 +200,11 @@ impl RBXScriptSignalSingle {
         &mut self,
         this_userdata: LuaAnyUserData,
         lua: &Lua,
-        func: LuaFunction
+        func: LuaFunction,
     ) -> LuaResult<RBXScriptConnection> {
         let script = ThreadIdentity::fetch(lua).script;
-        self.once_internal(this_userdata, lua, func).map(move |x| x.attach_owned(script, lua))
+        self.once_internal(this_userdata, lua, func)
+            .map(move |x| x.attach_owned(script, lua))
     }
 }
 
@@ -428,7 +430,7 @@ impl RBXScriptSignal {
         let mut single: LuaUserDataRefMut<RBXScriptSignalSingle> = u.borrow_typed_mut()?;
         single.connect(u.clone(), lua, func)
     }
-    pub fn connect_internal(&self, lua: &Lua, func: LuaFunction) -> LuaResult<RBXScriptConnection> {
+    pub fn connect_detached(&self, lua: &Lua, func: LuaFunction) -> LuaResult<RBXScriptConnection> {
         let v = self.into_lua(lua)?;
         let u = v.as_userdata().expect("must_be_userdata");
         let mut single: LuaUserDataRefMut<RBXScriptSignalSingle> = u.borrow_typed_mut()?;
@@ -446,7 +448,7 @@ impl RBXScriptSignal {
         let mut single: LuaUserDataRefMut<RBXScriptSignalSingle> = u.borrow_typed_mut()?;
         single.once(u.clone(), lua, func)
     }
-    pub fn once_internal(&self, lua: &Lua, func: LuaFunction) -> LuaResult<RBXScriptConnection> {
+    pub fn once_detached(&self, lua: &Lua, func: LuaFunction) -> LuaResult<RBXScriptConnection> {
         let v = self.into_lua(lua)?;
         let u = v.as_userdata().expect("must_be_userdata");
         let mut single: LuaUserDataRefMut<RBXScriptSignalSingle> = u.borrow_typed_mut()?;
@@ -486,17 +488,19 @@ impl RBXScriptConnection {
     pub fn new_custom(
         is_connected_fn: LuaFunction,
         disconnect_fn: LuaFunction,
-        script: Option<Entity>,
-        lua: &Lua,
+        attach_info: Option<(Entity, &Lua)>,
     ) -> RBXScriptConnection {
-        RBXScriptConnection(
+        let mut c = RBXScriptConnection(
             InnerRBXScriptConnection::Custom {
                 disconnect_fn,
                 is_connected_fn,
             },
-            script,
-        )
-        .attach_owned(script, lua)
+            None,
+        );
+        if let Some((script, lua)) = attach_info {
+            c = c.attach_owned(Some(script), lua);
+        }
+        c
     }
 
     fn attach_owned(mut self, script: Option<Entity>, lua: &Lua) -> Self {

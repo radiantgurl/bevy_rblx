@@ -10,7 +10,7 @@ use crate::{
     enums::{CloseReason, CreatorType},
     instance::WorkspaceMembers,
     internal_prelude::*,
-    userdata::ObjectRef,
+    userdata::{ObjectRef, RBXScriptSignal},
 };
 use bevy::prelude::*;
 use bevy_rblx_derive::{fast_flag, register_class};
@@ -79,7 +79,10 @@ register_class! {
             ServiceProvider::get_service(lua, (ObjectRef::new(lua, this), "Workspace".to_owned()))?.into_lua(lua)
         }]
         #[deprecated_alias="workspace"]
-        virtual workspace: ObjectRef
+        virtual workspace: ObjectRef,
+
+        #[read_only]
+        pub loaded: RBXScriptSignal
     }
     methods {
         fn bind_to_close(lua: &Lua, this: ObjectRef, f: LuaFunction) -> LuaResult<()> {

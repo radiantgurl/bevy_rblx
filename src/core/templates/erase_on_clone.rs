@@ -4,7 +4,7 @@ use bevy::prelude::{Deref, DerefMut};
 use mlua::{FromLua, IntoLua};
 
 #[repr(transparent)]
-#[derive(PartialEq, Eq, Debug, Hash, Deref, DerefMut, Default)]
+#[derive(PartialEq, Eq, Debug, Hash, Deref, DerefMut, Default, PartialOrd, Ord)]
 pub struct EraseOnClone<T>(#[deref] pub T);
 
 impl<T: FromLua> FromLua for EraseOnClone<T> {
