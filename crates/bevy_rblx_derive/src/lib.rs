@@ -956,6 +956,22 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
     } else {
         quote! {}
     };
+    let pre_drop_define = if let Some(parse::PreDestroyMethod {
+        r#fn,
+        this_ident,
+        this_ty,
+        code_block,
+        ..
+    }) = &args.pre_drop
+    {
+        quote! {
+            impl #class_name {
+                #r#fn pre_drop(#this_ident: #this_ty) #code_block
+            }
+        }
+    } else {
+        quote! {}
+    };
 
     let post_init = if args.post_init.is_some() {
         quote! {Some(#class_name::post_init)}
@@ -964,6 +980,11 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
     };
     let custom_getter = if args.custom_getter.is_some() {
         quote! {Some(#class_name::custom_getter)}
+    } else {
+        quote! {None}
+    };
+    let pre_drop = if args.pre_drop.is_some() {
+        quote! {Some(#class_name::pre_drop)}
     } else {
         quote! {None}
     };
@@ -1008,6 +1029,8 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
         #post_init_fn_define
 
+        #pre_drop_define
+
         #custom_getter_define
 
         #lua_send_check
@@ -1021,11 +1044,13 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 methods: &[#(#method_infos),*],
 
                 new: bevy_rblx::internal::ObjectNewFn::#new_fn,
+                pre_drop: #pre_drop,
                 post_init: #post_init,
                 custom_getter: #custom_getter,
 
                 method_resolution_order: ::std::sync::LazyLock::new(move || bevy_rblx::internal::ObjectVTable::generate_method_resolution_order(stringify!(#class_name))),
                 lazy_full_fields: ::std::sync::LazyLock::new(move || bevy_rblx::internal::ObjectVTable::fetch_full_fields(stringify!(#class_name))),
+                requires_destructor: ::std::sync::LazyLock::new(move || bevy_rblx::internal::ObjectVTable::check_requires_destructor(stringify!(#class_name)))
             };
 
             bevy_rblx::internal::inventory::submit!(bevy_rblx::internal::ObjectVTableCreationPointer(move || &#vtable_name));

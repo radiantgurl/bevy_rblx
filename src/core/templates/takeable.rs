@@ -1,9 +1,9 @@
 use std::ops::{Deref, DerefMut};
 
 #[repr(transparent)]
-#[derive(Clone, Copy, Eq, Ord, Hash)]
+#[derive(Clone, Copy, Eq, Ord, Hash, Debug)]
 pub struct Takeable<T> {
-    inner: Option<T>
+    inner: Option<T>,
 }
 
 impl<T: PartialEq> PartialEq for Takeable<T> {
@@ -29,7 +29,9 @@ impl<T: PartialOrd> PartialOrd<T> for Takeable<T> {
 
 impl<T: Default> Default for Takeable<T> {
     fn default() -> Self {
-        Self { inner: Some(T::default()) }
+        Self {
+            inner: Some(T::default()),
+        }
     }
 }
 
@@ -51,8 +53,6 @@ impl<T> Takeable<T> {
         self.inner.take().expect("value already taken")
     }
     pub const fn new(value: T) -> Self {
-        Self {
-            inner: Some(value)
-        }
+        Self { inner: Some(value) }
     }
 }

@@ -54,6 +54,7 @@ pub type LuaObjectFieldGetterFn = fn(&Lua, Entity, &str) -> LuaResult<LuaValue>;
 pub type LuaObjectSetterFn = fn(&Lua, Entity, &mut ObjectContext, LuaValue) -> LuaResult<()>;
 pub type LuaObjectPropertyGetDefaultFn = fn(&Lua) -> LuaResult<LuaFreeValue>;
 pub type LuaObjectPostInitFn = fn(&Lua, Entity) -> LuaResult<()>;
+pub type LuaObjectPreDropFn = fn(EntityWorldMut);
 
 #[derive(Debug)]
 pub struct ObjectPropertyInfo {
@@ -170,6 +171,8 @@ impl ObjectContext {
     pub fn fire_changed(self, lua: &Lua, entity: Entity) -> LuaResult<()> {
         if !self.property_changed.is_some_and(|e| e.1) && self.other_modified_properties.is_empty()
         {
+            let ObjectContext { manual_drop, .. } = self;
+            forget(manual_drop);
             return Ok(()); // skip if nothing is set
         }
         let ObjectContext {
@@ -355,10 +358,12 @@ pub struct ObjectVTable {
 
     pub new: ObjectNewFn,
     pub post_init: Option<LuaObjectPostInitFn>,
+    pub pre_drop: Option<LuaObjectPreDropFn>,
     pub custom_getter: Option<LuaObjectFieldGetterFn>,
 
     pub method_resolution_order: LazyLock<Vec<&'static ObjectVTable>>,
     pub lazy_full_fields: LazyLock<HashMap<&'static str, ObjectField>>,
+    pub requires_destructor: LazyLock<bool>,
 }
 
 #[doc(hidden)]
@@ -421,6 +426,32 @@ impl ObjectVTable {
         mro.into_iter()
             .map(|x| *OBJECT_VTABLES.get(&x).expect("class exists"))
             .collect()
+    }
+    pub fn check_requires_destructor(class_name: &'static str) -> bool {
+        for vtable in OBJECT_VTABLES
+            .get(class_name)
+            .unwrap()
+            .method_resolution_order
+            .iter()
+        {
+            if vtable.pre_drop.is_some() {
+                return true;
+            }
+        }
+        false
+    }
+    pub(crate) fn run_destructors(mut w: EntityWorldMut) {
+        for i in w
+            .get::<ObjectHeader>()
+            .unwrap()
+            .vtable
+            .method_resolution_order
+            .iter()
+        {
+            if let Some(destructor) = i.pre_drop {
+                w.reborrow_scope(destructor);
+            }
+        }
     }
 }
 
@@ -533,11 +564,13 @@ const _: () = {
         ],
         new: ObjectNewFn::None,
         post_init: None,
+        pre_drop: None,
         custom_getter: None,
         method_resolution_order: LazyLock::new(move || {
             ObjectVTable::generate_method_resolution_order("Object")
         }),
         lazy_full_fields: LazyLock::new(move || ObjectVTable::fetch_full_fields("Object")),
+        requires_destructor: LazyLock::new(move || false),
     };
 
     inventory::submit!(ObjectVTableCreationPointer(move || &VTABLE));

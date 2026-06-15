@@ -6,13 +6,13 @@ use bevy::ecs::query::{Added, Allow, With, Without};
 use bevy::ecs::resource::Resource;
 use bevy::ecs::schedule::IntoScheduleConfigs;
 use bevy::ecs::system::{Commands, Query};
-use bevy::ecs::world::World;
+use bevy::ecs::world::{EntityWorldMut, World};
 use bevy::platform::collections::HashMap;
 use bevy_rblx_derive::{cached_lua_function, fast_flag, register, register_class};
 use mlua::prelude::*;
 
 use crate::core::extension::{EngineExtensionDistribution, EngineExtensionInitLevel};
-use crate::core::lua::{FFLuauDefaultJit, LuaSingleton};
+use crate::core::lua::{FFLuauDefaultJit, LuaSingleton, ThreadIdentityType};
 use crate::core::object::{DisabledObject, FFIsEdit, Instance, ObjectHeader, RootInstance};
 use crate::core::{FAST_FLAGS, object::InstanceMembers};
 use crate::enums::RunContext;
@@ -23,7 +23,7 @@ use crate::core::{
     ContainerProvenance, Headless, LuauContainer, SchedulerPhase, TaskScheduler, ThreadIdentity,
     WorldAccess,
 };
-use crate::userdata::ObjectRef;
+use crate::userdata::{ObjectRef, RBXScriptConnection};
 
 register_class! {
     abstract LuaSourceContainer (Instance)
@@ -154,6 +154,7 @@ impl LuaSingleton for ModuleScript {
 
 #[cached_lua_function]
 fn disable_basescript(lua: &Lua, this: ObjectRef) -> LuaResult<()> {
+    RBXScriptConnection::disconnect_script(lua, this.entity())?;
     let mut wa = WorldAccess::fetch(lua);
     let world = wa.access_synchronized()?;
     let threads = ThreadIdentity::get_threads(lua, this.entity());
@@ -221,7 +222,17 @@ fn enable_basescript(lua: &Lua, this: ObjectRef) -> LuaResult<()> {
     drop(wa);
     let path = Instance::get_full_name(lua, (this.clone(),))?;
     let f = create_lua_function(lua, source, path, this.entity())?;
-    TaskScheduler::fetch(lua).defer_next_frame(lua, f, ())?;
+    let t = TaskScheduler::fetch(lua).defer_next_frame(lua, f, ())?;
+    unsafe {
+        ThreadIdentity::set_thread(
+            lua,
+            t,
+            ThreadIdentity {
+                identity: ThreadIdentityType::Script,
+                script: Some(this.entity()),
+            },
+        );
+    }
     Ok(())
 }
 
@@ -268,33 +279,57 @@ fn set_enabled(lua: &Lua, this: Entity, new_value: bool) -> LuaResult<bool> {
     members.enabled = new_value;
     let started = members.started;
     drop(members);
+    let destroyed = InstanceMembers::fetch_members(world, this).was_destroyed();
     if started == new_value || world.get::<DisabledObject>(this.entity()).is_some() {
         return Ok(true);
     }
     let new_lua = get_provenance_for_enabling_script(this, world);
-    drop(wa);
-    if new_value {
+    if new_value && !destroyed {
         TaskScheduler::fetch(&new_lua).defer(
             &new_lua,
             ENABLE_BASESCRIPT.fetch(&new_lua),
-            ObjectRef::new(lua, this),
+            ObjectRef::new_world(world, this),
         )?;
     } else {
         TaskScheduler::fetch(&new_lua).defer(
             &new_lua,
             DISABLE_BASESCRIPT.fetch(&new_lua),
-            ObjectRef::new(lua, this),
+            ObjectRef::new_world(world, this),
         )?;
     }
     return Ok(true);
 }
 
 register_class! {
-    #[post_init=fn(lua:&Lua, _this: Entity) -> LuaResult<()> {
-        if !WorldAccess::fetch_readonly(lua).access_read_only().contains_resource::<ScriptingLoaded>() {
+    #[post_init=fn(lua: &Lua, this: Entity) -> LuaResult<()> {
+        let wa = WorldAccess::fetch_readonly(lua);
+        let world = wa.access_read_only();
+        if !world.contains_resource::<ScriptingLoaded>() {
             Err(LuaError::runtime("scripting module is not loaded."))
         } else {
+            let mut qs_game = world.try_query_filtered::<&LuauContainer, With<RootInstance>>().unwrap();
+            let main_lua = &qs_game.single(&*world).unwrap().lua;
+            let this_objectref = ObjectRef::new_world(&*world, this);
+            let f = main_lua.create_function(move |lua: &Lua, ()| {
+                let wa = WorldAccess::fetch_readonly(lua);
+                let world = wa.access_read_only();
+                let started = BaseScriptMembers::fetch_members(&*world, this_objectref.entity()).started;
+                if let Some(p) = world.get::<ContainerProvenance>(this_objectref.entity()) && started {
+                    let new_lua = world.get::<LuauContainer>(p.entity).unwrap().lua.clone();
+                    drop(world);
+                    drop(wa);
+                    TaskScheduler::fetch(&new_lua).defer_custom_pd(&new_lua, DISABLE_BASESCRIPT.fetch(&new_lua), this_objectref.clone(), false)?;
+                }
+                Ok(())
+            })?;
+            InstanceMembers::fetch_members(&*world, this).destroying.once_internal(main_lua, f)?;
             Ok(())
+        }
+    }]
+    #[pre_drop=fn(this: EntityWorldMut) {
+        if let Some(prov) = this.get::<ContainerProvenance>() {
+            let lua = this.world().get::<LuauContainer>(prov.entity).unwrap().lua.clone();
+            RBXScriptConnection::disconnect_script(&lua, this.id()).expect("error occured while running destructor for BaseScript");
         }
     }]
     abstract BaseScript (LuaSourceContainer)

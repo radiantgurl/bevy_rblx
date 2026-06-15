@@ -73,10 +73,7 @@ pub(super) fn initialize(w: &mut World) {
     clock(); // initialize clock
     let root_instance;
     {
-        let _guard = WorldAccess::fetch(&container.lua).insert_sync_access(
-            w,
-            &container.lua,
-        );
+        let _guard = WorldAccess::fetch(&container.lua).insert_sync_access(w, &container.lua);
 
         root_instance = instance_new(&container.lua, "DataModel".to_owned())
             .unwrap()
@@ -221,7 +218,7 @@ macro_rules! create_runservice_trigger {
         concat_idents::concat_idents!(trigger_runservice_event = runservice_event, _, $name, {
             pub fn trigger_runservice_event(
                 w: &mut World,
-                mut cached_event: Local<Option<RBXScriptSignal>>
+                mut cached_event: Local<Option<RBXScriptSignal>>,
             ) -> Result<(), BevyError> {
                 if cached_event.is_none() {
                     let mut members_qs = w.query::<&RunServiceMembers>();
@@ -814,10 +811,7 @@ impl Engine {
             loop {
                 for (lua, still_waiting) in waiting.iter_mut() {
                     if *still_waiting {
-                        let _guard = WorldAccess::fetch(lua).insert_sync_access(
-                            w,
-                            lua,
-                        );
+                        let _guard = WorldAccess::fetch(lua).insert_sync_access(w, lua);
                         let task = TaskScheduler::fetch(lua);
                         task.run(
                             lua,

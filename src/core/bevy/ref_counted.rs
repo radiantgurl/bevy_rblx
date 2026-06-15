@@ -2,6 +2,7 @@
 use crate::core::engine::VERBOSE_FLAG;
 use crate::{
     core::{FAST_FLAGS, object::object::DisabledObject},
+    internal::{ObjectHeader, ObjectVTable},
     internal_prelude::*,
 };
 use bevy::{platform::collections::HashSet, prelude::*};
@@ -304,19 +305,23 @@ impl<'a> RefCountedEntityCommandsExt for EntityWorldMut<'a> {
     }
 }
 fn refcounted_check_dead(
-    q: Query<(Entity, &RefCountedComponent), Allow<DisabledObject>>,
+    q: Query<(Entity, &RefCountedComponent, Option<&ObjectHeader>), Allow<DisabledObject>>,
     par_commands: ParallelCommands,
 ) {
     if FAST_FLAGS.fetch::<FFDisableRefCountedGC>() {
         return;
     }
-    q.par_iter().for_each(|(e, r)| {
+    q.par_iter().for_each(|(e, r, h)| {
         let locked = r.0.lock();
         if locked.should_delete() {
             debug_assert!(locked.fetch_count() == 0);
             bevy::log::trace!(target: "bevy_rblx::RefCounted", "deleting entity {e} with {} references ({:?} group refs)", locked.count, locked.group.as_ref().map(|x| x.inner.load(Ordering::Acquire)));
             par_commands.command_scope(move |mut commands| {
-                commands.entity(e).detach_all_children().despawn();
+                commands.entity(e).detach_all_children();
+                if let Some(o) = h && *o.vtable.requires_destructor {
+                    commands.entity(e).queue(ObjectVTable::run_destructors);
+                }
+                commands.entity(e).despawn();
             });
         } else {
             bevy::log::trace!(target: "bevy_rblx::RefCounted", "{e} has {} references ({:?} group refs)", locked.count, locked.group.as_ref().map(|x| x.inner.load(Ordering::Acquire)));

@@ -15,7 +15,7 @@ use mlua::{AppDataRef, AppDataRefMut, prelude::*};
 enum InternalWorldAccess {
     #[default]
     None,
-     Synchronized {
+    Synchronized {
         world: RefCell<World>,
     },
     Desynchronized {
@@ -149,7 +149,8 @@ impl<'a> Drop for WorldAccessCreateGuard<'a> {
             InternalWorldAccess::Synchronized { world } => {
                 let world = world.into_inner();
                 self.placeholder_world.0 = Some(replace(&mut self.real_world, world));
-                self.real_world.insert_resource(self.placeholder_world.take())
+                self.real_world
+                    .insert_resource(self.placeholder_world.take())
             }
             _ => unreachable!("invalid world access"),
         }
@@ -183,7 +184,9 @@ impl WorldAccess {
         world: &'w mut World,
         lua: &'s Lua,
     ) -> WorldAccessSyncGuard<'w> {
-        let mut placeholder_world = world.remove_resource::<PlaceholderWorld>().expect("WorldAccess aliasing detected.");
+        let mut placeholder_world = world
+            .remove_resource::<PlaceholderWorld>()
+            .expect("WorldAccess aliasing detected.");
         self.0 = InternalWorldAccess::Synchronized {
             world: RefCell::new(replace(world, placeholder_world.0.take().unwrap())),
         };
@@ -210,10 +213,10 @@ impl WorldAccess {
         }
     }
     #[must_use = "world access is automatically dropped once the guard gets dropped. to control this behavior you may drop it manually."]
-    pub(in crate::core) fn create<'a>(
-        w: &'a mut World
-    ) -> WorldAccessCreateGuard<'a> {
-        let mut placeholder = w.remove_resource::<PlaceholderWorld>().expect("WorldAccess aliasing detected.");
+    pub(in crate::core) fn create<'a>(w: &'a mut World) -> WorldAccessCreateGuard<'a> {
+        let mut placeholder = w
+            .remove_resource::<PlaceholderWorld>()
+            .expect("WorldAccess aliasing detected.");
         let world = replace(w, placeholder.0.take().unwrap());
         WorldAccessCreateGuard {
             access: WorldAccess(InternalWorldAccess::Synchronized {

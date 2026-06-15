@@ -214,6 +214,8 @@ mod kw {
     custom_keyword!(reflect_opaque);
     custom_keyword!(ObjectContext);
     custom_keyword!(changed_aliases);
+    custom_keyword!(EntityWorldMut);
+    custom_keyword!(pre_drop);
 
     #[derive(Clone, Copy)]
     pub(crate) struct End;
@@ -671,6 +673,31 @@ pub(crate) type GetterLuaMethod = LuaMethodClosure<GetterLuaArgs, kw::LuaValue>;
 pub(crate) type SetterLuaMethod = LuaMethodClosure<SetterLuaArgs, UnitType>;
 pub(crate) type PostInitFn = LuaMethodClosure<kw::End, UnitType>;
 
+pub(crate) struct PreDestroyMethod {
+    pub(crate) r#fn: Token![fn],
+    pub(crate) this_ident: Ident,
+    pub(crate) this_ty: kw::EntityWorldMut,
+    pub(crate) code_block: CodeBlock,
+}
+
+impl Parse for PreDestroyMethod {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let r#fn = input.parse()?;
+        let content;
+        let _paren = parenthesized!(content in input);
+        let this_ident = content.parse()?;
+        content.parse::<Token![:]>()?;
+        let this_ty = content.parse()?;
+        let code_block = input.parse()?;
+        Ok(Self {
+            r#fn,
+            this_ident,
+            this_ty,
+            code_block,
+        })
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Method<MethodTy: Parse + Clone> {
     pub meta: MethodMeta,
@@ -925,6 +952,7 @@ pub(crate) struct ClassArgs {
         CodeBlock,
     )>,
     pub post_init: Option<(PostInitFn, CodeBlock)>,
+    pub pre_drop: Option<PreDestroyMethod>,
     pub priv_token: Option<Token![priv]>,
     pub abstract_token: Option<Token![abstract]>,
     pub class_name: Ident,
@@ -944,6 +972,7 @@ impl Parse for ClassArgs {
         let mut post_init = None;
         let mut custom_getter = None;
         let mut reflect_type = None;
+        let mut pre_drop = None;
         while input.peek(Token![#]) {
             input.parse::<Token![#]>()?;
             let content;
@@ -958,6 +987,10 @@ impl Parse for ClassArgs {
                 content.parse::<kw::post_init>()?;
                 content.parse::<Token![=]>()?;
                 post_init = Some((content.parse::<PostInitFn>()?, content.parse()?));
+            } else if content.peek(kw::pre_drop) {
+                content.parse::<kw::pre_drop>()?;
+                content.parse::<Token![=]>()?;
+                pre_drop = Some(content.parse::<PreDestroyMethod>()?);
             } else if content.peek(kw::custom_getter) {
                 content.parse::<kw::custom_getter>()?;
                 content.parse::<Token![=]>()?;
@@ -993,6 +1026,7 @@ impl Parse for ClassArgs {
             post_init,
             custom_getter,
             reflect_type,
+            pre_drop,
         })
     }
 }

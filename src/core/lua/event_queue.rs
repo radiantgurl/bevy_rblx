@@ -52,7 +52,7 @@ impl<T: IntoLuaMulti + Clone + LuaSend> EventQueue<T> {
     #[inline]
     pub const fn new() -> Self {
         Self {
-            queued: Takeable::new(Vec::new())
+            queued: Takeable::new(Vec::new()),
         }
     }
     #[inline]

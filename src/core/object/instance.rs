@@ -861,3 +861,9 @@ register_class! {
         }
     }
 }
+
+impl InstanceMembers {
+    pub fn was_destroyed(&self) -> bool {
+        self.destroyed
+    }
+}

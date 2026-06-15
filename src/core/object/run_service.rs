@@ -1,6 +1,6 @@
 use crate::core::lua::{CachedLuaFunction, callback::LuaPrioCallbackTableCached};
 use crate::core::object::service::DisablingService;
-use crate::core::{Headless, TaskScheduler};
+use crate::core::{Headless, TaskScheduler, ThreadIdentity};
 use crate::enums::{PredictionMode, PredictionStatus, RunState, StepFrequency};
 use crate::internal_prelude::*;
 use bevy::ecs::entity::Entity;
@@ -150,7 +150,7 @@ register_class! {
             drop(wa);
             let is_connected_fn = SIMULATION_IS_CONNECTED.fetch(lua).bind((this.clone(), id))?;
             let disconnect_fn = SIMULATION_DISCONNECT.fetch(lua).bind((this.clone(), id))?;
-            let signal = RBXScriptConnection::new_custom(is_connected_fn, disconnect_fn);
+            let signal = RBXScriptConnection::new_custom(is_connected_fn, disconnect_fn, ThreadIdentity::fetch(lua).script, lua);
             Ok(signal)
         }
         fn unbind_from_render_step(lua: &Lua, this: ObjectRef, name: String) -> LuaResult<()> {
@@ -167,10 +167,7 @@ register_class! {
 }
 
 impl RunService {
-    pub(in crate::core) fn simulation_hook(
-        world: &mut World,
-        mut frame_count: Local<u8>,
-    ) {
+    pub(in crate::core) fn simulation_hook(world: &mut World, mut frame_count: Local<u8>) {
         let dt = world.resource::<Time<Fixed>>().delta_secs_f64();
         let run_service = world
             .query_filtered::<Entity, With<RunServiceMembers>>()
@@ -189,17 +186,13 @@ impl RunService {
                 StepFrequency::Hz1 => (*frame_count) % 60 == 0,
             };
             if should_run {
-                let _guard =
-                    WorldAccess::fetch(&lua).insert_sync_access(world, &lua);
+                let _guard = WorldAccess::fetch(&lua).insert_sync_access(world, &lua);
                 TaskScheduler::fetch(&lua).spawn(&lua, func, dt).unwrap();
             }
         }
         *frame_count = (*frame_count + 1) % 60;
     }
-    pub(in crate::core) fn render_hook(
-        world: &mut World,
-        mut frame_count: Local<u8>,
-    ) {
+    pub(in crate::core) fn render_hook(world: &mut World, mut frame_count: Local<u8>) {
         if world.get_resource::<Headless>().is_some() {
             return;
         }
