@@ -2,7 +2,7 @@ use crate::core::Engine;
 
 #[test]
 pub fn parent_change_before_groups() {
-    let mut app = Engine::test_mode(5);
+    let mut app = Engine::test_mode(Some(2));
     Engine::test_mode_lua_load(
         &mut app,
         r#"
@@ -16,7 +16,7 @@ pub fn parent_change_before_groups() {
         f = nil
         m = nil
         
-        task.defer(task.spawn, coroutine.running())
+        task.defer(coroutine.running())
         coroutine.yield()
         assert(game.ReplicatedStorage.Modules ~= nil, "modules exist")
         assert(game.ReplicatedStorage.Modules.ModuleScript ~= nil, "modulescript exists")

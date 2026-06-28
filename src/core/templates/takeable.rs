@@ -49,9 +49,11 @@ impl<T> DerefMut for Takeable<T> {
 }
 
 impl<T> Takeable<T> {
+    #[inline]
     pub const fn take(&mut self) -> T {
         self.inner.take().expect("value already taken")
     }
+    #[inline]
     pub const fn new(value: T) -> Self {
         Self { inner: Some(value) }
     }

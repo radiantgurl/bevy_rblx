@@ -16,6 +16,7 @@ use crate::core::lua::{FFLuauDefaultJit, LuaSingleton, ThreadIdentityType};
 use crate::core::object::{DisabledObject, FFIsEdit, Instance, ObjectHeader, RootInstance};
 use crate::core::{FAST_FLAGS, object::InstanceMembers};
 use crate::enums::RunContext;
+use crate::instance::{TestServiceMembers, insert_test_service_macros};
 use crate::internal::EngineExtension;
 use crate::internal_prelude::*;
 
@@ -58,7 +59,7 @@ fast_flag!(FFLuauDisableNativeFlag: bool = false);
 
 fn create_lua_function(
     lua: &Lua,
-    source: String,
+    mut source: String,
     mut path: String,
     script: Entity,
 ) -> LuaResult<LuaFunction> {
@@ -74,6 +75,22 @@ fn create_lua_function(
     env.raw_set("script", ObjectRef::new(lua, script))?;
     env.set_safeenv(true);
     path.insert(0, '@');
+
+    let wa = WorldAccess::fetch_readonly(lua);
+    let world = wa.access_read_only();
+    let mut qs = world
+        .try_query_filtered::<&ChildOf, Allow<DisabledObject>>()
+        .unwrap();
+    let q = qs.query(&world);
+    let ancestors = q.iter_ancestors(script).collect::<Vec<_>>();
+    drop(qs);
+    let is_ran_by_test_service = ancestors
+        .into_iter()
+        .any(|e| world.get::<TestServiceMembers>(e).is_some());
+    if is_ran_by_test_service {
+        source = insert_test_service_macros(source)?;
+    }
+
     let res = lua
         .load(source)
         .set_name(path)
@@ -173,13 +190,11 @@ fn disable_basescript(lua: &Lua, this: ObjectRef) -> LuaResult<()> {
     }
     Ok(())
 }
-#[cached_lua_function]
-fn enable_basescript(lua: &Lua, this: ObjectRef) -> LuaResult<()> {
+
+fn force_start_basescript(lua: &Lua, this: ObjectRef) -> LuaResult<()> {
     let mut wa = WorldAccess::fetch(lua);
     let world = wa.access_synchronized()?;
-    let is_server = world.contains_resource::<Headless>();
-    let is_plugin = FAST_FLAGS.fetch::<FFIsEdit>();
-    let script_is_client = world.get::<LocalScriptMembers>(this.entity()).is_some();
+    #[cfg(debug_assertions)]
     {
         let c = world.get::<ContainerProvenance>(this.entity()).unwrap();
         let c = world.get::<LuauContainer>(c.entity).unwrap();
@@ -188,34 +203,7 @@ fn enable_basescript(lua: &Lua, this: ObjectRef) -> LuaResult<()> {
             "mismatch detected while trying to enable a script"
         );
     }
-    let mut members = BaseScriptMembers::fetch_members_mut(world, this.entity());
-    match members.run_context {
-        RunContext::Legacy => {
-            if !(script_is_client ^ is_server) {
-                return Ok(());
-            }
-        }
-        RunContext::Server => {
-            if !is_server {
-                return Ok(());
-            }
-        }
-        RunContext::Client => {
-            if is_server || is_plugin {
-                return Ok(());
-            }
-        }
-        RunContext::Plugin => {
-            if !is_plugin {
-                return Ok(());
-            }
-        }
-    }
-    if members.started {
-        return Ok(());
-    }
-    members.started = true;
-    drop(members);
+    BaseScriptMembers::fetch_members_mut(world, this.entity()).started = true;
     let source = LuaSourceContainerMembers::fetch_members(world, this.entity())
         .source
         .clone();
@@ -232,6 +220,50 @@ fn enable_basescript(lua: &Lua, this: ObjectRef) -> LuaResult<()> {
                 script: Some(this.entity()),
             },
         );
+    }
+    Ok(())
+}
+fn can_start(lua: &Lua, this: Entity) -> bool {
+    let wa = WorldAccess::fetch_readonly(lua);
+    let world = wa.access_read_only();
+    let is_server = world.contains_resource::<Headless>();
+    let is_edit = FAST_FLAGS.fetch::<FFIsEdit>();
+    let script_is_client = world.get::<LocalScriptMembers>(this.entity()).is_some();
+    let members = BaseScriptMembers::fetch_members(&world, this.entity());
+    match members.run_context {
+        RunContext::Legacy => {
+            if !(script_is_client ^ is_server) {
+                return false;
+            }
+        }
+        RunContext::Server => {
+            if !is_server {
+                return false;
+            }
+        }
+        RunContext::Client => {
+            if is_server || is_edit {
+                return false;
+            }
+        }
+        RunContext::Plugin => {
+            if !is_edit {
+                return false;
+            }
+        }
+    }
+    if members.started {
+        return false;
+    }
+    true
+}
+
+#[cached_lua_function]
+fn enable_basescript(lua: &Lua, this: ObjectRef) -> LuaResult<()> {
+    #[cfg(debug_assertions)]
+    WorldAccess::fetch(lua).assert_synchronized()?;
+    if can_start(lua, this.entity()) {
+        force_start_basescript(lua, this)?;
     }
     Ok(())
 }
@@ -342,6 +374,7 @@ register_class! {
             Ok(())
         }]
         #[changed_aliases=["Disabled"]]
+        #[default=true]
         enabled: bool,
         #[getter=fn(lua: &Lua, this: Entity, _vtable: &'static ObjectVTable) -> LuaResult<LuaValue> {
             let world_access = WorldAccess::fetch_readonly(lua);

@@ -14,9 +14,11 @@ lazy_static! {
 pub fn clock() -> Duration {
     CLOCK.elapsed()
 }
-pub fn system_time() -> i64 {
+pub fn system_time() -> UnixTimestamp {
     Utc::now().timestamp()
 }
+pub type UnixTimestamp = i64;
+pub type SinceStatic = f64;
 
 struct ClockSingleton;
 

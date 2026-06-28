@@ -4,7 +4,7 @@ mod event_queue;
 mod function;
 mod security;
 
-pub use clock::{clock, system_time};
+pub use clock::{SinceStatic, UnixTimestamp, clock, system_time};
 pub use function::CachedLuaFunction;
 pub use security::{SecurityContext, ThreadIdentityType};
 

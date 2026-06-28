@@ -247,6 +247,9 @@ impl LuaUserData for RBXScriptSignalSingle {
                         (this_userdata,): (LuaAnyUserData,)|
                         -> LuaResult<LuaMultiValue> {
                 let count;
+                if !TaskScheduler::can_yield(&lua) {
+                    return Err(LuaError::runtime("cannot yield"));
+                }
                 {
                     let mut this: LuaUserDataRefMut<Self> = this_userdata.borrow_typed_mut()?;
                     count = this.count;
@@ -267,8 +270,7 @@ impl LuaUserData for RBXScriptSignalSingle {
                     );
                     this.identities.insert(count, ThreadIdentity::fetch(&lua));
                 }
-                let values = lua.yield_with::<LuaMultiValue>(()).await;
-                values
+                lua.yield_with::<LuaMultiValue>(()).await
             },
         );
     }
@@ -426,33 +428,53 @@ impl RBXScriptSignal {
 
     pub fn connect(&self, lua: &Lua, func: LuaFunction) -> LuaResult<RBXScriptConnection> {
         let v = self.into_lua(lua)?;
-        let u = v.as_userdata().expect("must_be_userdata");
+        let u = v.as_userdata().unwrap();
         let mut single: LuaUserDataRefMut<RBXScriptSignalSingle> = u.borrow_typed_mut()?;
         single.connect(u.clone(), lua, func)
     }
     pub fn connect_detached(&self, lua: &Lua, func: LuaFunction) -> LuaResult<RBXScriptConnection> {
         let v = self.into_lua(lua)?;
-        let u = v.as_userdata().expect("must_be_userdata");
+        let u = v.as_userdata().unwrap();
         let mut single: LuaUserDataRefMut<RBXScriptSignalSingle> = u.borrow_typed_mut()?;
         single.connect_internal(u.clone(), lua, func)
     }
     pub fn connect_parallel(&self, lua: &Lua, func: LuaFunction) -> LuaResult<RBXScriptConnection> {
         let v = self.into_lua(lua)?;
-        let u = v.as_userdata().expect("must_be_userdata");
+        let u = v.as_userdata().unwrap();
         let mut single: LuaUserDataRefMut<RBXScriptSignalSingle> = u.borrow_typed_mut()?;
         single.connect_parallel(u.clone(), lua, func)
     }
     pub fn once(&self, lua: &Lua, func: LuaFunction) -> LuaResult<RBXScriptConnection> {
         let v = self.into_lua(lua)?;
-        let u = v.as_userdata().expect("must_be_userdata");
+        let u = v.as_userdata().unwrap();
         let mut single: LuaUserDataRefMut<RBXScriptSignalSingle> = u.borrow_typed_mut()?;
         single.once(u.clone(), lua, func)
     }
     pub fn once_detached(&self, lua: &Lua, func: LuaFunction) -> LuaResult<RBXScriptConnection> {
         let v = self.into_lua(lua)?;
-        let u = v.as_userdata().expect("must_be_userdata");
+        let u = v.as_userdata().unwrap();
         let mut single: LuaUserDataRefMut<RBXScriptSignalSingle> = u.borrow_typed_mut()?;
         single.once_internal(u.clone(), lua, func)
+    }
+    pub async fn wait<T: FromLuaMulti + IntoLuaMulti + LuaSend>(&self, lua: &Lua) -> LuaResult<T> {
+        if !TaskScheduler::can_yield(lua) {
+            return Err(LuaError::runtime("cannot yield in current context"));
+        }
+        let v = self.into_lua(lua)?;
+        let u = v.as_userdata().unwrap();
+        let mut single: LuaUserDataRefMut<RBXScriptSignalSingle> = u.borrow_typed_mut()?;
+        let thread = lua.current_thread();
+        single.once(
+            u.clone(),
+            &lua,
+            lua.create_function(move |lua: &Lua, vals: T| {
+                TaskScheduler::fetch(lua).defer(lua, thread.clone(), vals)?;
+                Ok(())
+            })?,
+        )?;
+        drop(single);
+        drop(v);
+        lua.yield_with::<T>(()).await
     }
 }
 
@@ -505,7 +527,6 @@ impl RBXScriptConnection {
 
     fn attach_owned(mut self, script: Option<Entity>, lua: &Lua) -> Self {
         self.1 = script;
-        bevy::log::info!(target: "bevy_rblx::RBXScriptConnection", "Connecting to event -> script: {script:?}");
         if let Some(script) = script {
             let mut conns = lua.app_data_mut::<RBXScriptConnections>().unwrap();
             conns.0.entry(script).or_default().push(self.clone());

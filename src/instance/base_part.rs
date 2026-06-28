@@ -2,6 +2,7 @@ use bevy_rblx_derive::register_class;
 
 use crate::{
     core::{WorldAccess, object::InstanceMembers},
+    enums::Material,
     internal_prelude::*,
     userdata::{CFrame, Color3, Vector3},
 };
@@ -44,7 +45,6 @@ register_class! {
         #[rename="CFrame"]
         virtual cframe: CFrame,
         pub size: Vector3,
-        pub color: Color3,
         pub pivot_offset: CFrame,
 
         #[getter=fn(lua: &Lua, this: Entity, _vtable: &'static ObjectVTable) -> LuaResult<LuaValue> {
@@ -96,8 +96,35 @@ register_class! {
         pub audio_can_collide: bool,
 
         pub cast_shadow: bool,
+        #[setter=fn(lua: &Lua, this: Entity, ctx: &mut ObjectContext, value: LuaValue) -> LuaResult<()> {
+            let new_value = f64::from_lua(value, lua)?.min(1.0).max(0.0);
+            let mut wa = WorldAccess::fetch(lua);
+            let world = wa.access_synchronized()?;
+
+            let mut members = BasePartMembers::fetch_members_mut(world, this);
+            if members.reflectance != new_value {
+                members.reflectance = new_value;
+                ctx.set_changed();
+            }
+            Ok(())
+        }]
         pub reflectance: f64,
-        pub transparency: f64
+        #[setter=fn(lua: &Lua, this: Entity, ctx: &mut ObjectContext, value: LuaValue) -> LuaResult<()> {
+            let new_value = f64::from_lua(value, lua)?.min(1.0).max(0.0);
+            let mut wa = WorldAccess::fetch(lua);
+            let world = wa.access_synchronized()?;
+
+            let mut members = BasePartMembers::fetch_members_mut(world, this);
+            if members.transparency != new_value {
+                members.transparency = new_value;
+                ctx.set_changed();
+            }
+            Ok(())
+        }]
+        pub transparency: f64,
+        pub color: Color3,
+        #[default=Material::SmoothPlastic]
+        pub material: Material
     }
     methods {}
 }

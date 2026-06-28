@@ -132,6 +132,11 @@ fn remove_parent(lua: &Lua, this: Entity, new_parent: Option<Entity>) -> LuaResu
         let world = wa.access_synchronized()?;
         let parent = world.get::<ChildOf>(this).unwrap().0;
         world.entity_mut(parent).detach_child(this);
+        events.push(
+            InstanceMembers::fetch_members(&world, this)
+                .ancestry_changed
+                .reference(),
+        );
 
         let mut descendants_qs = world.query_filtered::<&Children, Allow<DisabledObject>>();
         let descendants = descendants_qs.query(world);
@@ -153,8 +158,9 @@ fn remove_parent(lua: &Lua, this: Entity, new_parent: Option<Entity>) -> LuaResu
 
     Ok(())
 }
-fn add_parent(lua: &Lua, this: Entity, new_parent: Entity) -> LuaResult<()> {
+fn add_parent(lua: &Lua, this: Entity, new_parent: Entity, has_old_parent: bool) -> LuaResult<()> {
     let mut events: Vec<RBXScriptSignal> = Vec::new();
+    let mut ancestry_changed_events: Vec<RBXScriptSignal> = Vec::new();
     {
         let mut wa = WorldAccess::fetch(lua);
         let world = wa.access_synchronized()?;
@@ -162,7 +168,7 @@ fn add_parent(lua: &Lua, this: Entity, new_parent: Entity) -> LuaResult<()> {
         let mut ancestors_qs = world.query_filtered::<&ChildOf, Allow<DisabledObject>>();
         let ancestors = ancestors_qs.query(&*world);
         events.push(
-            InstanceMembers::fetch_members(world, this)
+            InstanceMembers::fetch_members(world, new_parent)
                 .child_added
                 .reference(),
         );
@@ -173,10 +179,32 @@ fn add_parent(lua: &Lua, this: Entity, new_parent: Entity) -> LuaResult<()> {
                     .reference(),
             )
         }
+        drop(ancestors_qs);
+        if !has_old_parent {
+            ancestry_changed_events.push(
+                InstanceMembers::fetch_members(&world, this)
+                    .ancestry_changed
+                    .reference(),
+            );
+            let mut descendants_qs = world.query_filtered::<&Children, Allow<DisabledObject>>();
+            let descendants = descendants_qs.query(world);
+
+            for descendant in descendants.iter_descendants(this) {
+                let descendant_members = InstanceMembers::fetch_members(&*world, descendant);
+                ancestry_changed_events.push(descendant_members.ancestry_changed.reference());
+            }
+        }
     }
 
     for ev in events {
         ev.fire_in_lua(lua, true, ObjectRef::new(lua, this))?;
+    }
+    for ev in ancestry_changed_events {
+        ev.fire_in_lua(
+            lua,
+            true,
+            (ObjectRef::new(lua, this), ObjectRef::new(lua, new_parent)),
+        )?;
     }
     Ok(())
 }
@@ -195,7 +223,7 @@ impl Instance {
             remove_parent(lua, this, new_parent)?;
         }
         if let Some(new_parent) = new_parent {
-            add_parent(lua, this, new_parent)?;
+            add_parent(lua, this, new_parent, has_parent)?;
         }
         match vtable.lazy_full_fields.get("Parent").unwrap() {
             super::object::ObjectField::Property(object_property_info) => {
@@ -311,10 +339,7 @@ register_class! {
             }
 
             // This internal order is: DescendantRemoving -> ChildRemoved -> AncestryChanged -> ChildAdded -> DescendantAdded
-            remove_parent(lua, this, obj_ref.as_ref().map(|x| x.entity()))?;
-            if let Some(new_parent) = obj_ref {
-                add_parent(lua, this, new_parent.entity())?;
-            }
+            Instance::force_set_parent(lua, this, obj_ref.map(|o| o.entity()))?;
             ctx.set_changed();
             Ok(())
         }]
@@ -809,6 +834,9 @@ register_class! {
             let instant = Instant::now();
             let mut printed_warning = false;
             loop {
+                if !TaskScheduler::can_yield(&lua) {
+                    return Err(LuaError::runtime("cannot yield"));
+                }
                 TaskScheduler::fetch(&lua).defer_next_frame(&lua, lua.current_thread(), ())?;
                 lua.yield_with::<()>(()).await?;
                 if let Some(i) = Instance::find_first_child(&lua, (this.clone(), name.clone()))? {

@@ -787,7 +787,8 @@ pub fn register_class(ts: proc_macro::TokenStream) -> proc_macro::TokenStream {
             let security_guard = if let Some(security) = &method_info.meta.security {
                 quote_spanned! { security.span() =>
                     {
-                        let current_context = bevy_rblx::internal::ThreadIdentity::fetch(lua).identity.get_security_contexts();
+                        use bevy_rblx::internal::LuaAsRef;
+                        let current_context = bevy_rblx::internal::ThreadIdentity::fetch(lua.as_lua_ref()).identity.get_security_contexts();
                         let expected_context = bevy_rblx::internal::SecurityContext::#security;
                         if !current_context.has(expected_context) {
                             return Err(bevy_rblx::internal::LuaError::runtime(format!(

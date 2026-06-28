@@ -1,12 +1,16 @@
 use std::fmt;
 use std::mem::take;
 
+#[cfg(test)]
+use crate::core::lua::clock;
 use crate::core::lua::{LuaSingleton, WorldAccess, system_time};
 use crate::core::object::ServiceMembers;
 use crate::core::object::service::DisablingService;
 use crate::enums::MessageType;
 use crate::internal_prelude::*;
 use crate::userdata::{ObjectRef, RBXScriptSignal};
+#[cfg(not(test))]
+use crossterm::terminal::is_raw_mode_enabled;
 
 use bevy::prelude::*;
 use bevy_rblx_derive::{register, register_class};
@@ -21,7 +25,7 @@ pub struct RblxLogs {
 pub struct LoggedMessage {
     pub msg_type: MessageType,
     pub msg: String,
-    pub time: i64,
+    pub timestamp: i64,
 }
 
 fn format_error(f: &mut fmt::Formatter, e: &LuaError) -> Result<(), fmt::Error> {
@@ -76,7 +80,7 @@ pub fn push_log(lua: &Lua, msg_type: MessageType, msg: impl fmt::Display) {
     commands.write_message(LoggedMessage {
         msg_type,
         msg: msg.clone(),
-        time: instant,
+        timestamp: instant,
     });
     {
         let msg_clone = msg.clone();
@@ -87,12 +91,24 @@ pub fn push_log(lua: &Lua, msg_type: MessageType, msg: impl fmt::Display) {
             Ok(())
         });
     }
-    match msg_type {
-        MessageType::MessageOutput | MessageType::MessageInfo => {
-            bevy::log::info!(target: "bevy_rblx::LogService", "{msg}")
+    #[cfg(not(test))]
+    if !is_raw_mode_enabled().unwrap() {
+        match msg_type {
+            MessageType::MessageOutput | MessageType::MessageInfo => {
+                bevy::log::info!(target: "bevy_rblx::LogService", "{msg}")
+            }
+            MessageType::MessageWarning => {
+                bevy::log::warn!(target: "bevy_rblx::LogService", "{msg}")
+            }
+            MessageType::MessageError => bevy::log::error!(target:"bevy_rblx::LogService", "{msg}"),
         }
-        MessageType::MessageWarning => bevy::log::warn!(target: "bevy_rblx::LogService", "{msg}"),
-        MessageType::MessageError => bevy::log::error!(target:"bevy_rblx::LogService", "{msg}"),
+    }
+    #[cfg(test)]
+    match msg_type {
+        MessageType::MessageOutput => println!("[{:.3}] [OUTPUT] {msg}", clock().as_secs_f64()),
+        MessageType::MessageInfo => println!("[{:.3}]  [INFO]  {msg}", clock().as_secs_f64()),
+        MessageType::MessageWarning => println!("[{:.3}]  [WARN]  {msg}", clock().as_secs_f64()),
+        MessageType::MessageError => println!("[{:.3}] [ERROR]  {msg}", clock().as_secs_f64()),
     }
 }
 

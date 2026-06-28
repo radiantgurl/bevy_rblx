@@ -6,6 +6,7 @@ use crate::{
             DisabledObject, InstanceMembers,
             service_provider::{ServiceProvider, ServiceProviderMembers},
         },
+        push_log,
     },
     enums::{CloseReason, CreatorType},
     instance::WorkspaceMembers,
@@ -18,6 +19,9 @@ use mlua::prelude::*;
 
 #[derive(Clone, Copy, Component, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct RootInstance;
+
+#[derive(Clone, Copy, Resource, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub struct ShutdownDisabled;
 
 register_class! {
     #[require_components(RootInstance, LuauContainer)]
@@ -94,12 +98,18 @@ register_class! {
             Ok(())
         }
         fn shutdown(lua: &Lua, this: ObjectRef, reason: Option<CloseReason>) -> LuaResult<()> {
-            let world_access = WorldAccess::fetch_readonly(lua);
-            let mut commands = world_access.access_commands();
+            let mut world_access = WorldAccess::fetch(lua);
+            let (world, mut commands) = world_access.access_world_commands();
             if let Some(r) = reason {
                 commands.insert_resource(ShutdownReason(r));
             }
-            commands.write_message(AppExit::Success);
+            if world.contains_resource::<ShutdownDisabled>() {
+                drop(commands);
+                drop(world_access);
+                push_log(lua, crate::enums::MessageType::MessageWarning, lua.traceback(Some("game:Shutdown() is not allowed within an integrated server."), 1)?.to_string_lossy());
+            } else {
+                commands.write_message(AppExit::Success);
+            }
             Ok(())
         }
     }

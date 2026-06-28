@@ -10,13 +10,13 @@ use crate::core::{
 
 #[test]
 pub fn server_initialization_stability() {
-    let mut app = Engine::test_mode(6000);
+    let mut app = Engine::test_mode(Some(6000));
     app.run();
 }
 
 #[test]
 pub fn print_core_initialized_table() {
-    let mut app = Engine::test_mode(2);
+    let mut app = Engine::test_mode(Some(2));
     app.add_systems(PostStartup, post_startup_hook);
     fn post_startup_hook(w: &mut World) {
         let lua = {
@@ -40,7 +40,7 @@ pub fn print_core_initialized_table() {
 
 #[test]
 pub fn object_postinit() {
-    let mut app = Engine::test_mode(2);
+    let mut app = Engine::test_mode(Some(2));
     app.add_systems(PostStartup, post_startup_hook);
     fn post_startup_hook(w: &mut World) {
         let run_service = w

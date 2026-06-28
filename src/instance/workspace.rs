@@ -1,12 +1,13 @@
 use bevy::ecs::query::FilteredAccessSet;
 use bevy_rblx_derive::register_class;
+use parking_lot::Mutex;
 
 use crate::core::WorldAccess;
 use crate::core::lua::{EventQueue, EventQueueNoArgs};
 use crate::core::templates::EraseOnClone;
 use crate::enums::BulkMoveMode;
 use crate::internal_prelude::*;
-use crate::userdata::{CFrame, LuaFreeValue, ObjectRef, Vector3};
+use crate::userdata::{CFrame, LuaFreeValue, ObjectRef, RaycastParams, RaycastResult, Vector3};
 use avian3d::prelude::*;
 use bevy::ecs::system::{SystemMeta, SystemParam, SystemState};
 use bevy::prelude::*;
@@ -56,7 +57,7 @@ register_class! {
 
         let mut members = WorldRootMembers::fetch_members_mut(world, this);
 
-        *members.query_state = Some(state);
+        *members.query_state = Some(Mutex::new(state));
         *members.meta = Some(meta);
 
         Ok(())
@@ -64,7 +65,7 @@ register_class! {
     #[reflect_opaque]
     abstract WorldRoot(Model)
     members {
-        priv query_state: EraseOnClone<Option<QueryState>>,
+        priv query_state: EraseOnClone<Option<Mutex<QueryState>>>,
         priv meta: EraseOnClone<Option<SystemMeta>>
     }
     methods {
@@ -93,8 +94,8 @@ register_class! {
 
             let cf_name = String::from("CFrame");
             let mut cf_queue = EventQueue::<CFrame>::new();
+            let mut vec_queue = EventQueue::<Vector3>::new();
             if event_mode == BulkMoveMode::FireAllEvents {
-                let mut vec_queue = EventQueue::<Vector3>::new();
                 let pos_name = String::from("Position");
                 let rot_name = String::from("Rotation");
                 let ori_name = String::from("Orientation");
@@ -114,7 +115,6 @@ register_class! {
                     }
                 }
                 drop(wa);
-                vec_queue.fire_in_lua(lua)?;
             } else {
                 for (header, cframe) in objects_qs.iter_many(world, &objects).zip(cframes.iter()) {
                     if let Some(ev) = header.get_property_changed(&cf_name) {
@@ -123,14 +123,37 @@ register_class! {
                 }
                 drop(wa);
             }
-            cf_queue.fire_in_lua(lua)?;
             changed_queue.fire_in_lua(lua, "CFrame")?;
             if event_mode == BulkMoveMode::FireAllEvents {
                 changed_queue.fire_in_lua(lua, "Position")?;
                 changed_queue.fire_in_lua(lua, "Rotation")?;
                 changed_queue.fire_in_lua(lua, "Orientation")?;
             }
+            cf_queue.fire_in_lua(lua)?;
+            vec_queue.fire_in_lua(lua)?;
             Ok(())
+        }
+        fn blockcast(lua: &Lua, this: ObjectRef, cframe: CFrame, size: Vector3, direction: Vector3, params: RaycastParams) -> LuaResult<Option<RaycastResult>> {
+            let wa = WorldAccess::fetch_readonly(lua);
+            let w = wa.access_read_only();
+            let world_root = WorldRootMembers::fetch_members(&w, this.entity());
+
+            let mut guard = world_root.query_state.as_ref().unwrap().lock();
+            let spatial_query = fetch_query(&w, &mut guard, world_root.meta.as_ref().unwrap())?;
+
+            let vec3: Vec3 = size.into();
+            let block = Collider::cuboid(vec3.x, vec3.y, vec3.z);
+            let transform: Transform = cframe.into();
+            let vec3_direction: Vec3 = direction.into();
+            let vec3_direction = Dir3::new_unchecked(vec3_direction.normalize());
+            let shapecast_config = ShapeCastConfig::default()
+                .with_max_distance(vec3_direction.length());
+            let filter = SpatialQueryFilter::default();
+            if let Some(res) = spatial_query.cast_shape(&block, transform.translation, transform.rotation, vec3_direction, &shapecast_config, &filter) {
+                todo!()
+            } else {
+                Ok(None)
+            }
         }
     }
 }

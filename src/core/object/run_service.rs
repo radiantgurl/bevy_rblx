@@ -57,9 +57,6 @@ register_class! {
         #[default=RunState::Running]
         run_state: RunState,
 
-        pub priv is_client: bool,
-        pub priv is_server: bool,
-
         #[read_only]
         pub heartbeat: RBXScriptSignal,
         #[read_only]
@@ -94,12 +91,12 @@ register_class! {
         fn is_client(lua: &Lua, this: ObjectRef) -> LuaResult<bool> {
             let wa = WorldAccess::fetch_readonly(lua);
             let world = wa.access_read_only();
-            Ok(world.get::<RunServiceMembers>(this.entity()).expect("is run service").is_client)
+            Ok(!world.contains_resource::<Headless>())
         }
         fn is_server(lua: &Lua, this: ObjectRef) -> LuaResult<bool> {
             let wa = WorldAccess::fetch_readonly(lua);
             let world = wa.access_read_only();
-            Ok(world.get::<RunServiceMembers>(this.entity()).expect("is run service").is_server)
+            Ok(world.contains_resource::<Headless>())
         }
         fn is_studio(lua: &Lua, _this: ObjectRef) -> LuaResult<bool> {
             Ok(FAST_FLAGS.fetch::<FFIsStudio>())

@@ -5,6 +5,9 @@ use crate::{
 use bevy::prelude::*;
 use bevy_rblx_derive::register;
 
+mod materials;
+mod objects;
+
 #[derive(Default, Clone, Copy, Debug)]
 pub struct RenderingExtension;
 
@@ -34,7 +37,7 @@ impl EngineExtension for RenderingExtension {
         Some("Rendering integration with Bevy Game Engine")
     }
 
-    fn engine_build(&mut self, app: &mut App) {}
+    fn post_core_init(&self, world: &mut World) {}
 
     fn post_shutdown_hook(&self, world: &mut World) {}
 }

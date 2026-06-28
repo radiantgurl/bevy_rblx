@@ -1,6 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     mem::take,
+    ptr::null_mut,
     sync::{
         Arc, Weak,
         atomic::{AtomicBool, Ordering},
@@ -11,11 +12,7 @@ use std::{
 use crate::core::{FAST_FLAGS, logs::push_lua_error, lua::singleton::LuaSingleton};
 use bevy::prelude::*;
 use bevy_rblx_derive::{fast_flag, register};
-use mlua::{
-    AppDataRef,
-    ffi::{lua_isyieldable, lua_pushboolean},
-    prelude::*,
-};
+use mlua::{AppDataRef, ffi::lua_isyieldable, prelude::*};
 
 use crate::internal_prelude::*;
 
@@ -140,6 +137,9 @@ impl TaskScheduler {
     }
 
     pub async fn wait(&self, lua: &Lua, delay: Duration) -> LuaResult<f64> {
+        if !TaskScheduler::can_yield(lua) {
+            return Err(LuaError::runtime("cannot yield"));
+        }
         {
             let mut task = self.cell.borrow_mut();
             let pd = task.parallel_dispatch as usize;
@@ -149,6 +149,9 @@ impl TaskScheduler {
     }
 
     pub async fn synchronize(&self, lua: &Lua) -> LuaResult<()> {
+        if !TaskScheduler::can_yield(lua) {
+            return Err(LuaError::runtime("cannot yield"));
+        }
         if self.cell.borrow().parallel_dispatch {
             self.cell.borrow_mut().defer_threads[0]
                 .push((lua.current_thread(), LuaMultiValue::new()));
@@ -158,6 +161,9 @@ impl TaskScheduler {
         }
     }
     pub async fn desynchronize(&self, lua: &Lua) -> LuaResult<()> {
+        if !TaskScheduler::can_yield(lua) {
+            return Err(LuaError::runtime("cannot yield"));
+        }
         if !self.cell.borrow().parallel_dispatch {
             self.cell.borrow_mut().defer_threads[1]
                 .push((lua.current_thread(), LuaMultiValue::new()));
@@ -184,10 +190,13 @@ impl TaskScheduler {
 
     pub fn can_yield(lua: &Lua) -> bool {
         unsafe {
-            lua.exec_raw::<bool>((), move |l| {
-                lua_pushboolean(l, lua_isyieldable(l));
+            let mut l = null_mut();
+            lua.exec_raw::<()>((), |l_inner| {
+                l = l_inner;
             })
-            .unwrap()
+            .unwrap();
+            debug_assert!(!l.is_null(), "exec_raw call failed"); // NEVER HAPPENS
+            lua_isyieldable(l) != 0
         }
     }
 
@@ -214,6 +223,9 @@ impl TaskScheduler {
         )
     }
     async fn wait_lua(lua: Lua, (delay,): (f64,)) -> LuaResult<f64> {
+        if !TaskScheduler::can_yield(&lua) {
+            return Err(LuaError::runtime("cannot yield"));
+        }
         {
             let t = lua.app_data_ref::<TaskScheduler>().unwrap();
             let mut task = t.cell.borrow_mut();
@@ -228,6 +240,9 @@ impl TaskScheduler {
     }
     async fn synchronize_lua(lua: Lua, _: ()) -> LuaResult<()> {
         let should_yield = {
+            if !TaskScheduler::can_yield(&lua) {
+                return Err(LuaError::runtime("cannot yield"));
+            }
             let task = lua.app_data_ref::<TaskScheduler>().unwrap();
             if task.cell.borrow().parallel_dispatch {
                 task.cell.borrow_mut().defer_threads[0]
@@ -245,6 +260,9 @@ impl TaskScheduler {
     }
     async fn desynchronize_lua(lua: Lua, _: ()) -> LuaResult<()> {
         let should_yield = {
+            if !TaskScheduler::can_yield(&lua) {
+                return Err(LuaError::runtime("cannot yield"));
+            }
             let task = lua.app_data_ref::<TaskScheduler>().unwrap();
             if !task.cell.borrow().parallel_dispatch {
                 task.cell.borrow_mut().defer_threads[1]
@@ -281,6 +299,9 @@ impl TaskScheduler {
     }
     #[cfg(feature = "deprecated")]
     async fn wait_deprecated_lua(lua: Lua, (delay,): (f64,)) -> LuaResult<f64> {
+        if !TaskScheduler::can_yield(&lua) {
+            return Err(LuaError::runtime("cannot yield"));
+        }
         let start = Instant::now();
         let new_duration = Duration::from_secs_f64(delay);
         loop {

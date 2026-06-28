@@ -1,7 +1,10 @@
 use std::{
     mem::take,
     process::exit,
-    sync::{Arc, atomic::AtomicU8},
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering::Relaxed},
+    },
     time::{Duration, Instant},
 };
 
@@ -14,6 +17,7 @@ use bevy::{
         App, AppExit, AppLabel, FixedUpdate, Last, PluginGroup as _, PostUpdate, PreUpdate,
         Startup, Update,
     },
+    asset::{AssetEvent, Assets},
     camera::Camera2d,
     ecs::{
         error::BevyError,
@@ -25,7 +29,9 @@ use bevy::{
         world::{CommandQueue, World},
     },
     log::{Level, LogPlugin},
+    mesh::Mesh,
     platform::collections::HashMap,
+    scene::SceneSpawner,
     tasks::{ComputeTaskPool, ParallelSlice},
     time::Time,
 };
@@ -53,8 +59,10 @@ use crate::{
         },
         object::{
             DisabledObject, NewInstanceEvent, RunServiceMembers,
-            data_model::register_game_and_workspace_global, run_service::RunService,
-            service::auto_disable_objects, service_provider::ServiceProviderMembers,
+            data_model::{ShutdownDisabled, register_game_and_workspace_global},
+            run_service::RunService,
+            service::auto_disable_objects,
+            service_provider::ServiceProviderMembers,
         },
     },
     enums::{CloseReason, SignalBehavior},
@@ -410,7 +418,7 @@ impl Engine {
         app.world_mut().insert_resource(Headless);
 
         app.add_plugins(MinimalPlugins.build().add(LogPlugin {
-            level: match VERBOSE_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
+            level: match VERBOSE_FLAG.load(Relaxed) {
                 0 => Level::INFO,
                 1 => Level::DEBUG,
                 _ => Level::TRACE,
@@ -418,6 +426,9 @@ impl Engine {
             ..Default::default()
         }));
         app.add_plugins(PhysicsPlugins::default());
+        app.add_message::<AssetEvent<Mesh>>();
+        app.init_resource::<Assets<Mesh>>();
+        app.init_resource::<SceneSpawner>();
 
         Self::additional(&mut app);
 
@@ -427,7 +438,7 @@ impl Engine {
         let mut app = App::new();
 
         app.add_plugins(DefaultPlugins.set(LogPlugin {
-            level: match VERBOSE_FLAG.load(std::sync::atomic::Ordering::Relaxed) {
+            level: match VERBOSE_FLAG.load(Relaxed) {
                 0 => Level::INFO,
                 1 => Level::DEBUG,
                 _ => Level::TRACE,
@@ -457,6 +468,7 @@ impl Engine {
 
     pub fn insert_integrated_server(client: &mut App) {
         let mut server = Self::headless();
+        server.insert_resource(ShutdownDisabled);
 
         let mut server_subapp = take(&mut server.sub_apps_mut().main);
 
@@ -476,8 +488,7 @@ impl Engine {
         *frame_count += 1;
     }
     #[cfg(test)]
-    pub fn test_mode(exit_after_frames: u32) -> App {
-        use crate::core::{FAST_FLAGS, lua::FFTaskSchedulerDisableWatchdog};
+    pub fn test_mode(exit_after_frames: Option<u32>) -> App {
         use bevy::{
             app::{Main, PluginGroup as _, RunMode, ScheduleRunnerPlugin},
             ecs::system::{LocalBuilder, ParamBuilder, SystemParamBuilder},
@@ -485,19 +496,21 @@ impl Engine {
 
         let mut app = App::new();
         app.world_mut().insert_resource(Headless);
-        FAST_FLAGS.store::<FFTaskSchedulerDisableWatchdog>(true);
+        // FAST_FLAGS.store::<FFTaskSchedulerDisableWatchdog>(true);
 
         app.add_plugins(MinimalPlugins.set(ScheduleRunnerPlugin {
             run_mode: RunMode::Loop { wait: None },
         }));
-        let built_system = (
-            LocalBuilder(0),
-            LocalBuilder(exit_after_frames),
-            ParamBuilder,
-        )
-            .build_state(app.world_mut())
-            .build_system(Engine::generate_exit_after_frame_count);
-        app.add_systems(Main, built_system);
+        if let Some(exit_after_frames) = exit_after_frames {
+            let built_system = (
+                LocalBuilder(0),
+                LocalBuilder(exit_after_frames),
+                ParamBuilder,
+            )
+                .build_state(app.world_mut())
+                .build_system(Engine::generate_exit_after_frame_count);
+            app.add_systems(Main, built_system);
+        }
 
         Self::additional(&mut app);
 
@@ -733,10 +746,7 @@ impl Engine {
             exit(0);
         }
 
-        VERBOSE_FLAG.store(
-            args.get_count("debug"),
-            std::sync::atomic::Ordering::Relaxed,
-        );
+        VERBOSE_FLAG.store(args.get_count("debug"), Relaxed);
 
         if args.get_flag("headless") {
             app = Engine::headless();
@@ -788,6 +798,7 @@ impl Engine {
             .copied()
             .map(|x| x.0)
             .unwrap_or(CloseReason::Unknown);
+        w.insert_resource(ShutdownReason(reason));
         let prev = FAST_FLAGS.fetch::<FFSignalBehavior>();
         {
             let mut wa = WorldAccess::create(w);
@@ -879,6 +890,76 @@ impl Engine {
             lua.load(format!("task.defer(function() {code_string} end)"))
                 .exec()
                 .unwrap();
+        });
+    }
+
+    #[cfg(test)]
+    pub fn test_mode_test_service_script(app: &mut App, test_name: &str, code: &str) {
+        use crate::core::{ThreadIdentity, lua::ThreadIdentityType, object::RootInstance};
+        use bevy::{
+            app::PostStartup,
+            ecs::{entity::Entity, query::With},
+        };
+        use mlua::Value;
+
+        let test_name_string = test_name.to_string();
+        let code_string = code.to_string();
+        app.add_systems(PostStartup, move |w: &mut World| {
+            let lua = {
+                let game = w
+                    .query_filtered::<Entity, With<RootInstance>>()
+                    .single(w)
+                    .unwrap();
+                w.get::<LuauContainer>(game).unwrap().lua.clone()
+            };
+            let env_table = lua
+                .create_table_from::<Value, Value>(
+                    lua.globals().pairs::<Value, Value>().map(|v| v.unwrap()),
+                )
+                .unwrap();
+            env_table
+                .raw_set("code_string", code_string.clone())
+                .unwrap();
+            env_table
+                .raw_set("test_name", test_name_string.clone())
+                .unwrap();
+            let func = lua
+                .load(
+                    r#"
+                    if not _G.TESTSERVICE_INIT then
+                        _G.TESTSERVICE_INIT = true
+                        task.defer(function()
+                            local thread = coroutine.running()
+                            task.defer(thread)
+                            coroutine.yield()
+                            
+                            game:GetService("TestService"):RunAsync()
+                            game:Shutdown()
+                        end)
+                    end
+                    task.defer(function()
+                        local s = Instance.new("Script")
+                        s.Name = test_name
+                        s.Source = code_string
+                        s.Enabled = true
+                        s.Parent = game:GetService("TestService")
+                    end)"#,
+                )
+                .set_environment(env_table)
+                .into_function()
+                .unwrap();
+            let thr = lua.create_thread(func).unwrap();
+            unsafe {
+                ThreadIdentity::set_thread(
+                    &lua,
+                    thr.clone(),
+                    ThreadIdentity {
+                        identity: ThreadIdentityType::StudioPlugin,
+                        script: None,
+                    },
+                );
+            }
+            thr.resume::<()>(()).unwrap();
         });
     }
 }

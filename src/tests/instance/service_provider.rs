@@ -12,7 +12,7 @@ use crate::core::{Engine, LuauContainer, object::RootInstance};
 
 #[test]
 pub fn bind_to_close() {
-    let mut app = Engine::test_mode(4);
+    let mut app = Engine::test_mode(Some(4));
     app.add_systems(PostStartup, post_startup_hook);
     #[derive(Resource, Clone)]
     struct FlagRes(Arc<AtomicBool>);
