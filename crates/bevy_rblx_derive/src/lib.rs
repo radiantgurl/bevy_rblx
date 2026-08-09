@@ -126,7 +126,7 @@ pub fn lua_enum(
     quote! {
         use mlua::prelude::*;
 
-        #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, bevy::reflect::Reflect)]
+        #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, bevy::reflect::Reflect, Hash)]
         #[repr(i16)]
         #enum_block
 

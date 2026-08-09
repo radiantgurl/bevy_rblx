@@ -18,13 +18,13 @@ use bevy::{
         Startup, Update,
     },
     asset::{AssetEvent, Assets},
-    camera::Camera2d,
+    camera::{Camera, Camera2d},
     ecs::{
         error::BevyError,
         message::{MessageReader, Messages},
         query::Allow,
         resource::Resource,
-        schedule::{IntoScheduleConfigs, Schedule, SystemSet},
+        schedule::{IntoScheduleConfigs, Schedule, ScheduleLabel, SystemSet},
         system::{Commands, Local},
         world::{CommandQueue, World},
     },
@@ -34,6 +34,7 @@ use bevy::{
     scene::SceneSpawner,
     tasks::{ComputeTaskPool, ParallelSlice},
     time::Time,
+    utils::default,
 };
 use bevy_egui::EguiPrimaryContextPass;
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
@@ -283,6 +284,24 @@ pub enum SchedulerPhase {
     PreRender,
 }
 
+impl SchedulerPhase {
+    pub fn get_label(self) -> &'static dyn ScheduleLabel {
+        match self {
+            SchedulerPhase::ReplicationRecv
+            | SchedulerPhase::PreAnimation
+            | SchedulerPhase::HumanoidStep
+            | SchedulerPhase::PreSimulation => &PreUpdate,
+            SchedulerPhase::StepSimulation => &FixedUpdate,
+            SchedulerPhase::PostSimulation
+            | SchedulerPhase::PreHeartbeat
+            | SchedulerPhase::Heartbeat => &Update,
+            SchedulerPhase::ReplicationSend | SchedulerPhase::Input | SchedulerPhase::PreRender => {
+                &PostUpdate
+            }
+        }
+    }
+}
+
 pub static VERBOSE_FLAG: AtomicU8 = AtomicU8::new(0);
 
 enum EnabledExts {
@@ -453,7 +472,15 @@ impl Engine {
             app.world_mut()
                 .add_schedule(Schedule::new(EguiPrimaryContextPass));
         }
-        app.world_mut().spawn(Camera2d);
+        app
+            .world_mut()
+            .spawn((
+                Camera2d,
+                Camera {
+                    order: 1,
+                    ..default()
+                },
+            ));
 
         Self::additional(&mut app);
 

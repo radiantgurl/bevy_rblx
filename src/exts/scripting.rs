@@ -490,14 +490,14 @@ impl EngineExtension for ScriptingExt {
         Some("Adds LuaSourceContainer derived classes")
     }
 
-    fn runtime_init(&self, world: &mut bevy::ecs::world::World) {
+    fn runtime_init(&self, world: &mut World) {
         world.insert_resource(ScriptingLoaded);
         world.schedule_scope(Update, |_, s| {
             s.add_systems(script_enable_disable.before(SchedulerPhase::PreHeartbeat));
         });
     }
 
-    fn post_shutdown_hook(&self, world: &mut bevy::ecs::world::World) {
+    fn post_shutdown_hook(&self, world: &mut World) {
         let entities = world
             .query_filtered::<Entity, With<BaseScriptMembers>>()
             .iter(world)

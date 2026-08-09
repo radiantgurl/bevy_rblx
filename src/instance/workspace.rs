@@ -7,7 +7,7 @@ use crate::core::lua::{EventQueue, EventQueueNoArgs};
 use crate::core::templates::EraseOnClone;
 use crate::enums::BulkMoveMode;
 use crate::internal_prelude::*;
-use crate::userdata::{CFrame, LuaFreeValue, ObjectRef, RaycastParams, RaycastResult, Vector3};
+use crate::userdata::{CFrame, ObjectRef, RaycastParams, RaycastResult, Vector3};
 use avian3d::prelude::*;
 use bevy::ecs::system::{SystemMeta, SystemParam, SystemState};
 use bevy::prelude::*;

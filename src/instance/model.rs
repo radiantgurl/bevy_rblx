@@ -13,11 +13,18 @@ use crate::core::{WorldAccess, object::InstanceMembers};
 use crate::userdata::{CFrame, LuaFreeValue, ObjectRef, RBXScriptConnection, RBXScriptSignal};
 
 register_class! {
+    #[require_components(Transform)]
     abstract PVInstance(Instance)
     members {
-        pub priv origin: CFrame,
+        #[getter=fn(lua:&Lua, this: Entity, _vtable: &'static ObjectVTable) -> LuaResult<LuaValue> {
+            let wa = WorldAccess::fetch_readonly(lua);
+            let world = wa.access_read_only();
+
+            <Transform as Into<CFrame>>::into(world.get::<Transform>(this).unwrap()).into_lua(lua)
+        }]
+        priv virtual origin: CFrame,
         #[rename="Pivot Offset"]
-        pub priv pivot_offset: CFrame
+        pub priv pivot_offset: CFrame,
     }
     methods {
         fn get_pivot(lua: &Lua, this: ObjectRef) -> LuaResult<CFrame> {
@@ -25,17 +32,17 @@ register_class! {
             let world = wa.access_read_only();
             let members = PVInstanceMembers::fetch_members(&*world, this.entity());
             let piv_offset: Transform = members.pivot_offset.into();
-            let origin: Transform = members.origin.into();
+            let origin: Transform = world.get::<Transform>(this.entity()).unwrap().clone();
             let cf: CFrame = piv_offset.mul_transform(origin).into();
             Ok(cf)
         }
         fn pivot_to(lua: &Lua, this: ObjectRef, cf: CFrame) -> LuaResult<()> {
             let mut wa = WorldAccess::fetch(lua);
             let world = wa.access_synchronized()?;
-            let mut members = PVInstanceMembers::fetch_members_mut(world, this.entity());
+            let members = PVInstanceMembers::fetch_members(world, this.entity());
             let piv_offset: Transform = members.pivot_offset.into();
             let piv_offset_inverse = Transform::from_matrix(piv_offset.to_matrix().inverse());
-            members.origin = piv_offset_inverse.mul_transform(cf.into()).into();
+            *world.get_mut::<Transform>(this.entity()).unwrap() = piv_offset_inverse.mul_transform(cf.into());
             Ok(())
         }
     }

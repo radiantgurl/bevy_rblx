@@ -4,16 +4,25 @@ use crate::{
     core::{
         FAST_FLAGS, LuauContainer, SchedulerPhase, WorldAccess,
         extension::{EngineExtensionDistribution, EngineExtensionInitLevel},
-        object::{FFGameName, data_model::DataModelMembers},
+        object::{
+            FFGameName, InstanceMembers, data_model::DataModelMembers,
+            service_provider::ServiceProvider,
+        },
     },
     internal::{EngineExtension, OBJECT_VTABLES},
     internal_prelude::*,
+    userdata::{LuaFreeValue, ObjectRef},
 };
-use bevy::{ecs::schedule::ScheduleCleanupPolicy, prelude::*, tasks::AsyncComputeTaskPool};
+use bevy::{
+    ecs::schedule::ScheduleCleanupPolicy, platform::collections::HashMap, prelude::*,
+    tasks::AsyncComputeTaskPool,
+};
 use bevy_async_commands::prelude::*;
 use bevy_async_ecs::AsyncWorld;
-use bevy_rblx_derive::register;
+use bevy_rblx_derive::{register, register_class};
 use rbx_binary::from_reader;
+
+use mlua::prelude::*;
 
 #[derive(Message, Clone, Debug)]
 pub struct LoadPlace(pub String);
@@ -105,6 +114,8 @@ impl EngineExtension for RblxFileLoader {
 #[derive(SystemSet, Hash, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct FileLoaderSet;
 
+// pub async fn load_recursive_from_ref
+
 pub async fn load_place(
     async_world: AsyncWorld,
     game: Entity,
@@ -125,27 +136,58 @@ pub async fn load_place(
         .root()
         .children()
         .iter()
-        .filter_map(|r| opened_place.get_by_ref(*r))
-        .filter_map(|i| {
+        .filter_map(|r| opened_place.get_by_ref(*r).map(|v| (*r, v)))
+        .filter_map(|(r, i)| {
             let class_name = i.class.to_string();
             if OBJECT_VTABLES
                 .get(class_name.as_str())
                 .map(|vtable| vtable.inherits.contains(&"Service"))
-                .unwrap_or_default()
+                .unwrap_or(false)
             {
-                Some(class_name)
+                Some((r, class_name))
             } else {
                 None
             }
         })
         .collect::<Vec<_>>();
-    async_world
-        .apply(move |w: &mut World| {
-            let mut main_state_query = w.query_filtered::<&LuauContainer, With<DataModelMembers>>();
-            let main_state = main_state_query.single(w).unwrap().lua.clone();
-            // WorldAccess::fetch(&main_state).
+    let root_ref = opened_place.root_ref();
+    let mut ref_entity_map = async_world
+        .apply2(move |w: &mut World| -> LuaResult<_> {
+            let mut ref_entity_map = HashMap::new();
+            let mut main_state_query =
+                w.query_filtered::<(&LuauContainer, Entity), With<DataModelMembers>>();
+            let (main_state, game_entity) = {
+                let (c, e) = main_state_query.single(w).unwrap();
+                (c.lua.clone(), e)
+            };
+            ref_entity_map.insert(root_ref, game_entity);
+            let _guard = WorldAccess::fetch(&main_state).insert_sync_access(w, &main_state);
+            let game_ref = ObjectRef::new(&main_state, game_entity);
+            for (r, service) in services {
+                let oref = ServiceProvider::get_service(&main_state, (game_ref.clone(), service))?;
+                if let Some(oref) = oref {
+                    ref_entity_map.insert(r, oref.entity());
+                }
+            }
+            Ok(ref_entity_map)
         })
-        .await;
+        .await?;
+    // all services have been properly loaded by this point
+    // insert world access now
+    for (i, r) in opened_place
+        .root()
+        .children()
+        .iter()
+        .filter_map(|r| opened_place.get_by_ref(*r).map(|i| (i, *r)))
+    {
+        if !ref_entity_map.contains_key(&r) {
+            return Err(LuaError::runtime(format!(
+                "failed to load top-level service of class: {r} (does the class not exist?)"
+            ))
+            .into());
+        }
+        // ref valid
+    }
     Ok(())
 }
 
@@ -156,7 +198,7 @@ pub async fn load_model(
 ) -> Result<(), BevyError> {
     let file = File::open(path)?;
     let buf_file = BufReader::new(file);
-    let opened_place = from_reader(buf_file)?;
+    let opened_model = from_reader(buf_file)?;
 
     Ok(())
 }
@@ -198,4 +240,12 @@ pub fn file_loader_system(
             })
             .detach();
     }
+}
+
+register_class! {
+    priv MissingInstance(Instance)
+    members {
+        pub priv members: HashMap<String, LuaFreeValue>
+    }
+    methods {}
 }

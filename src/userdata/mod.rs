@@ -1,5 +1,6 @@
 mod cframe;
 mod color3;
+mod content;
 mod instance;
 mod lua_free_value;
 mod object;

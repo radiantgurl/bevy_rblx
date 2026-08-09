@@ -23,9 +23,6 @@ register_class! {
     }
     methods {
         fn find_service(lua: &Lua, this: ObjectRef, class_name: String) -> LuaResult<Option<ObjectRef>> {
-            // let wa = WorldAccess::fetch_readonly(lua);
-            // let world = wa.access_read_only();
-
             Instance::find_first_child_of_class(lua, (this, class_name))
         }
         fn get_service(lua: &Lua, this: ObjectRef, class_name: String) -> LuaResult<Option<ObjectRef>> {

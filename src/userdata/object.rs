@@ -18,7 +18,7 @@ impl PartialEq for ObjectRef {
         self.e == other.e
     }
 }
-
+impl Eq for ObjectRef {}
 impl FromLua for ObjectRef {
     fn from_lua(value: LuaValue, _lua: &Lua) -> LuaResult<Self> {
         let v: LuaUserDataRef<Self> = value.borrow_typed()?;
@@ -86,6 +86,10 @@ impl LuaUserData for ObjectRef {
         methods.add_meta_method(
             "__index",
             move |l, t, (k,): (String,)| -> LuaResult<LuaValue> {
+                #[cfg(debug_assertions)]
+                if k == "id" {
+                    return t.e.to_string().into_lua(l);
+                }
                 let vtable = WorldAccess::fetch_readonly(l)
                     .access_read_only()
                     .get::<ObjectHeader>(t.e)
@@ -124,5 +128,11 @@ impl Clone for ObjectRef {
             e: self.e,
             reference: self.reference.reference(),
         }
+    }
+}
+
+impl std::hash::Hash for ObjectRef {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.e.hash(state);
     }
 }
