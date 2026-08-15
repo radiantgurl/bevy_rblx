@@ -3,7 +3,7 @@ use std::ops::DerefMut;
 use bevy::prelude::*;
 
 use crate::{
-    core::{object::DisabledObject},
+    core::object::DisabledObject,
     instance::{BasePartMembers, PartMembers},
 };
 

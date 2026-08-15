@@ -472,15 +472,13 @@ impl Engine {
             app.world_mut()
                 .add_schedule(Schedule::new(EguiPrimaryContextPass));
         }
-        app
-            .world_mut()
-            .spawn((
-                Camera2d,
-                Camera {
-                    order: 1,
-                    ..default()
-                },
-            ));
+        app.world_mut().spawn((
+            Camera2d,
+            Camera {
+                order: 1,
+                ..default()
+            },
+        ));
 
         Self::additional(&mut app);
 

@@ -23,34 +23,54 @@ use bevy_rblx_derive::{register, register_class};
 use rbx_binary::from_reader;
 
 use mlua::prelude::*;
+use rbx_types::Variant;
 
+/// Emitted whenever its time to load a place file into the engine. Typically emitted from within
+/// the engine.
+///
+/// Internally calls [load_place] with an async system context.
 #[derive(Message, Clone, Debug)]
-pub struct LoadPlace(pub String);
+pub struct LoadPlace(
+    /// The path for the .rbxl file
+    pub String,
+);
 
+/// Emitted whenever its time to load a model file into the engine. Typically emitted from within
+/// the engine.
+///
+/// Internally calls [load_model] with an async system context.
 #[derive(Message, Clone, Debug)]
 pub struct LoadModel {
+    /// The path for the .rbxm file
     pub path: String,
+    /// The parent of the model instance
     pub parent: Entity,
 }
-
+/// The result of a load operation after emitting LoadModel or LoadPlace.
+/// You can find which file it was for by checking the .path() method.
 #[derive(Message)]
 pub enum LoadResult {
+    /// The load was successful for path [.0]
     Successful(String),
+    /// The load failed for path [.0] with the error [.1]
     Failed(String, BevyError),
 }
 
 impl LoadResult {
+    /// The path of the load request that this result originates from
     pub fn path(&self) -> &str {
         match self {
             LoadResult::Successful(path) | LoadResult::Failed(path, _) => path.as_str(),
         }
     }
+    /// If the load was successful
     pub fn is_successful(&self) -> bool {
         match self {
             LoadResult::Successful(_) => true,
             _ => false,
         }
     }
+    /// Convert into a normal result
     pub fn as_result(&self) -> Result<(), &BevyError> {
         match self {
             LoadResult::Successful(_) => Ok(()),
@@ -58,13 +78,16 @@ impl LoadResult {
         }
     }
 }
+/// The [EngineExtension] in charge of loading files, known internally as `file_loader`.
+///
+/// Can be loaded and unloaded at runtime.
 #[derive(Clone, Copy, Default)]
 struct RblxFileLoader;
 
 #[register]
 impl EngineExtension for RblxFileLoader {
     fn id(&self) -> &'static str {
-        "fileloader"
+        "file_loader"
     }
 
     fn init_level(&self) -> EngineExtensionInitLevel {
@@ -114,7 +137,58 @@ impl EngineExtension for RblxFileLoader {
 #[derive(SystemSet, Hash, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct FileLoaderSet;
 
-// pub async fn load_recursive_from_ref
+fn variant_to_data(l: &Lua, v: Variant) -> LuaResult<LuaValue> {
+    match v {
+        Variant::Bool(v) => v.into_lua(l),
+        Variant::String(v) => v.into_lua(l),
+        Variant::Float32(v) => v.into_lua(l),
+        Variant::Float64(v) => v.into_lua(l),
+        Variant::Int32(v) => v.into_lua(l),
+        Variant::Int64(v) => v.into_lua(l),
+        Variant::BinaryString(binary_string) => {
+            LuaFreeValue::Buffer(binary_string.into_vec()).into_lua(l)
+        }
+        Variant::Axes(axes) => todo!(),
+        Variant::BrickColor(brick_color) => todo!(),
+        Variant::CFrame(cframe) => todo!(),
+        Variant::Color3(color3) => todo!(),
+        Variant::Color3uint8(color3uint8) => todo!(),
+        Variant::ColorSequence(color_sequence) => todo!(),
+        Variant::ContentId(content_id) => todo!(),
+        Variant::Enum(_) => todo!(),
+        Variant::Faces(faces) => todo!(),
+        Variant::NumberRange(number_range) => todo!(),
+        Variant::NumberSequence(number_sequence) => todo!(),
+        Variant::PhysicalProperties(physical_properties) => todo!(),
+        Variant::Ray(ray) => todo!(),
+        Variant::Rect(rect) => todo!(),
+        Variant::Ref(_) => todo!(),
+        Variant::Region3(region3) => todo!(),
+        Variant::Region3int16(region3int16) => todo!(),
+        Variant::SharedString(shared_string) => todo!(),
+        Variant::UDim(udim) => todo!(),
+        Variant::UDim2(udim2) => todo!(),
+        Variant::Vector2(vector2) => todo!(),
+        Variant::Vector2int16(vector2int16) => todo!(),
+        Variant::Vector3(vector3) => todo!(),
+        Variant::Vector3int16(vector3int16) => todo!(),
+        Variant::OptionalCFrame(cframe) => todo!(),
+        Variant::Tags(tags) => todo!(),
+        Variant::Attributes(attributes) => todo!(),
+        Variant::Font(font) => todo!(),
+        Variant::UniqueId(unique_id) => todo!(),
+        Variant::MaterialColors(material_colors) => todo!(),
+        Variant::SecurityCapabilities(security_capabilities) => todo!(),
+        Variant::EnumItem(enum_item) => todo!(),
+        Variant::Content(content) => todo!(),
+        Variant::NetAssetRef(net_asset_ref) => todo!(),
+        _ => todo!(),
+    }
+}
+
+async fn load_recursive_from_ref(async_world: AsyncWorld) {
+    todo!()
+}
 
 pub async fn load_place(
     async_world: AsyncWorld,
@@ -213,6 +287,8 @@ async fn handle_result(res: Result<(), BevyError>, path: String, async_world: As
     }
 }
 
+/// Handles all incoming calls for the [LoadModel] and [LoadPlace] events and properly calls the
+/// corresponding [load_model] and [load_place] systems.
 pub fn file_loader_system(
     mut model_requests: MessageReader<LoadModel>,
     mut place_requests: MessageReader<LoadPlace>,

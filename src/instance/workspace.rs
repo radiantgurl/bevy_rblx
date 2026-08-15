@@ -136,6 +136,7 @@ register_class! {
         fn blockcast(lua: &Lua, this: ObjectRef, cframe: CFrame, size: Vector3, direction: Vector3, params: RaycastParams) -> LuaResult<Option<RaycastResult>> {
             let wa = WorldAccess::fetch_readonly(lua);
             let w = wa.access_read_only();
+            // w.try_query_filtered::<Entity, Allow()>()
             let world_root = WorldRootMembers::fetch_members(&w, this.entity());
 
             let mut guard = world_root.query_state.as_ref().unwrap().lock();
@@ -148,9 +149,12 @@ register_class! {
             let vec3_direction = Dir3::new_unchecked(vec3_direction.normalize());
             let shapecast_config = ShapeCastConfig::default()
                 .with_max_distance(vec3_direction.length());
+            // params.as_send()?
             let filter = SpatialQueryFilter::default();
+            // filter
             if let Some(res) = spatial_query.cast_shape(&block, transform.translation, transform.rotation, vec3_direction, &shapecast_config, &filter) {
-                todo!()
+                // res.
+                lua_todo!();
             } else {
                 Ok(None)
             }
