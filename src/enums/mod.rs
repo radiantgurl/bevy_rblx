@@ -14,12 +14,17 @@ bevy_rblx_derive::create_enums!([
     FluidForces,
     FieldOfViewType,
     IKControlConstraintSupport,
+    KeyCode,
+    KeyCodeStringFormat,
+    PreferredInput,
     Material,
     MeshPartHeadsAndAccessories,
     MessageType,
     ModelLevelOfDetail,
     ModelStreamingBehavior,
     ModelStreamingMode,
+    ModifierKey,
+    MouseBehavior,
     MoverConstraintRootBehaviorMode,
     NormalId,
     PartType,
@@ -42,5 +47,7 @@ bevy_rblx_derive::create_enums!([
     SignalBehavior,
     StepFrequency,
     StreamOutBehavior,
-    StreamingIntegrityMode
+    StreamingIntegrityMode,
+    UserInputState,
+    UserInputType
 ]);
