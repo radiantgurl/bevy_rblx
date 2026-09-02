@@ -45,7 +45,7 @@ register_class! {
         mouse_enabled: bool,
         #[default=MouseBehavior::Default]
         pub mouse_behavior: MouseBehavior,
-    #[setter=fn(lua: &Lua, this: Entity, ctx: &mut ObjectContext, v: LuaValue) -> LuaResult<()> {
+        #[setter=fn(lua: &Lua, this: Entity, ctx: &mut ObjectContext, v: LuaValue) -> LuaResult<()> {
             lua_todo!()
         }]
         mouse_icon: String,

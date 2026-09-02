@@ -14,5 +14,5 @@ pub use model::{Model, ModelMembers, PVInstance, PVInstanceMembers};
 pub use part::{Part, PartMembers};
 pub use player::{Player, PlayerMembers};
 pub(crate) use test_service::{TestServiceMembers, insert_test_service_macros};
-pub use user_input_service::UserInputService;
+pub use user_input_service::{UserInputService, UserInputServiceMembers};
 pub use workspace::{Workspace, WorkspaceMembers, WorldRoot, WorldRootMembers};
